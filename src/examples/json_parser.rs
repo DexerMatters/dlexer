@@ -48,7 +48,7 @@ pub fn json_value() -> With<BasicParser, JsonValue> {
     let array = rec(json_value).sep(char(',')).between(char('['), char(']')) & JsonValue::Array;
 
     let key = string.clone() | build_ident(["json", "null", "true", "false"]);
-    let object = (key.with(char(':')) + rec(json_value).dbg())
+    let object = (key.with(char(':')) + rec(json_value))
         .sep(char(','))
         .between(char('{'), char('}'))
         & JsonValue::Object;
