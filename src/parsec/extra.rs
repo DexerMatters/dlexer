@@ -3,21 +3,17 @@ use crate::parsec::{Parsec, ParserError};
 
 impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, E, A> {}
 
-pub fn build_ident<const N: usize, S, E>(
-    reserved: [&'static str; N],
-) -> impl Fn() -> Parsec<S, E, String>
+pub fn build_ident<const N: usize, S, E>(reserved: [&'static str; N]) -> Parsec<S, E, String>
 where
     S: LexIterTrait + Clone + 'static,
     E: ParserError + 'static,
 {
-    move || {
-        let rsv = reserved.map(|s| s.to_string());
-        (alpha() | char('_'))
-            .extend((alphanumeric() | char('_')).many())
-            .collect::<String>()
-            .none_of(rsv.into_iter())
-            .expected("identifier")
-    }
+    let rsv = reserved.map(|s| s.to_string());
+    (alpha() | char('_'))
+        .extend((alphanumeric() | char('_')).many())
+        .collect::<String>()
+        .none_of(rsv.into_iter())
+        .expected("identifier")
 }
 
 pub fn indent_block<S, E, A>(parser: Parsec<S, E, A>) -> Parsec<S, E, Vec<A>>

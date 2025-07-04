@@ -416,45 +416,46 @@ impl<E: ParserError + 'static, A: 'static> Parsec<LexIter, E, A> {
         let input = LexIter::new(&content, skipper.as_skipper());
         self.run(input)
     }
-    pub fn integer(radix: u32) -> Parsec<LexIter, E, i64> {
-        token(
-            digit(radix)
-                .many1()
-                .collect::<String>()
-                .map(move |s| i64::from_str_radix(&s, radix).unwrap())
-                .expected("integer"),
-        )
-    }
+}
 
-    pub fn symbol(expected: &'static str) -> Parsec<LexIter, E, String> {
-        let expected_str = expected.to_string();
-        token(
-            Parsec::new(move |input: LexIter| {
-                let original_state = input.get_state();
-                let mut current_input = input;
-                let mut matched = String::new();
+pub fn integer<E: ParserError + 'static>(radix: u32) -> Parsec<LexIter, E, i64> {
+    token(
+        digit(radix)
+            .many1()
+            .collect::<String>()
+            .map(move |s| i64::from_str_radix(&s, radix).unwrap())
+            .expected("integer"),
+    )
+}
 
-                for expected_char in expected_str.chars() {
-                    match current_input.next() {
-                        Some(c) if c == expected_char => {
-                            matched.push(c);
-                        }
-                        Some(c) => {
-                            return Err(E::unexpected(
-                                (original_state, current_input.get_state()),
-                                &c,
-                            )
-                            .with_expected(&expected_str));
-                        }
-                        None => {
-                            return Err(E::eof((original_state, current_input.get_state())));
-                        }
+pub fn symbol<E: ParserError + 'static>(expected: &str) -> Parsec<LexIter, E, String> {
+    let expected_ = expected.to_string();
+    let expected_clone = expected_.clone();
+    token(
+        Parsec::new(move |input: LexIter| {
+            let original_state = input.get_state();
+            let mut current_input = input;
+            let mut matched = String::new();
+
+            for expected_char in expected_.chars() {
+                match current_input.next() {
+                    Some(c) if c == expected_char => {
+                        matched.push(c);
+                    }
+                    Some(c) => {
+                        return Err(
+                            E::unexpected((original_state, current_input.get_state()), &c)
+                                .with_expected(&expected_),
+                        );
+                    }
+                    None => {
+                        return Err(E::eof((original_state, current_input.get_state())));
                     }
                 }
+            }
 
-                Ok((current_input, matched))
-            })
-            .expected(expected),
-        )
-    }
+            Ok((current_input, matched))
+        })
+        .expected(expected_clone),
+    )
 }

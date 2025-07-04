@@ -48,13 +48,13 @@ pub mod extra;
 
 use std::{
     fmt::{Debug, Display},
-    ops::BitOr,
+    ops::{BitAnd, BitOr},
     rc::Rc,
 };
 
 use crate::{
     errors::{ParserError, SimpleParserError},
-    lex::{LexIter, LexIterTrait},
+    lex::{LexIter, LexIterState, LexIterTrait},
 };
 
 /// Type alias for building parsers with custom state and error types.
@@ -266,10 +266,10 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
     ///
     /// let parser = alpha().between(char('('), char(')'));
     /// ```
-    pub fn between<B: 'static>(
+    pub fn between<B: 'static, C: 'static>(
         self,
         left: Parsec<S, E, B>,
-        right: Parsec<S, E, B>,
+        right: Parsec<S, E, C>,
     ) -> Parsec<S, E, A>
     where
         S: Clone,
@@ -424,7 +424,7 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
     ///
     /// let parser = alpha().many_till(char(';'));
     /// ```
-    pub fn many_till(self, end: Parsec<S, E, S::Item>) -> Parsec<S, E, Vec<A>>
+    pub fn many_till<B: 'static>(self, end: Parsec<S, E, B>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
     {
@@ -433,8 +433,8 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
             let mut current_input = input;
 
             // Already check if the end condition is met
-            if let Ok((end_input, _)) = end.eval(current_input.clone()) {
-                return Ok((end_input, results));
+            if end.eval(current_input.clone()).is_ok() {
+                return Ok((current_input, results));
             }
 
             loop {
@@ -446,8 +446,8 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
                     Err(err) => return Err(err),
                 }
 
-                if let Ok((end_input, _)) = end.eval(current_input.clone()) {
-                    return Ok((end_input, results));
+                if end.eval(current_input.clone()).is_ok() {
+                    return Ok((current_input, results));
                 }
             }
         })
@@ -464,7 +464,7 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
     ///
     /// let parser = alpha().many1_till(char(';'));
     /// ```
-    pub fn many1_till(self, end: Parsec<S, E, S::Item>) -> Parsec<S, E, Vec<A>>
+    pub fn many1_till<B: 'static>(self, end: Parsec<S, E, B>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
     {
@@ -473,16 +473,16 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
             let mut results = vec![first_value];
 
             loop {
+                if end.eval(current_input.clone()).is_ok() {
+                    return Ok((current_input, results));
+                }
+
                 match self.eval(current_input.clone()) {
                     Ok((new_input, value)) => {
                         results.push(value);
                         current_input = new_input;
                     }
-                    Err(err) => return Err(err),
-                }
-
-                if let Ok((end_input, _)) = end.eval(current_input.clone()) {
-                    return Ok((end_input, results));
+                    Err(_) => return Ok((current_input, results)),
                 }
             }
         })
@@ -579,8 +579,8 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
             let mut current_input = input;
 
             // Check if the end condition is met immediately
-            if let Ok((end_input, _)) = end.eval(current_input.clone()) {
-                return Ok((end_input, results));
+            if end.eval(current_input.clone()).is_ok() {
+                return Ok((current_input, results));
             }
 
             // Parse the first item if possible
@@ -594,8 +594,8 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
 
             loop {
                 // Check if the end condition is met
-                if let Ok((end_input, _)) = end.eval(current_input.clone()) {
-                    return Ok((end_input, results));
+                if end.eval(current_input.clone()).is_ok() {
+                    return Ok((current_input, results));
                 }
 
                 // Try to parse separator followed by an item
@@ -609,8 +609,8 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
                     },
                     Err(err) => {
                         // If we can't parse a separator, check if end condition is met
-                        if let Ok((end_input, _)) = end.eval(current_input.clone()) {
-                            return Ok((end_input, results));
+                        if end.eval(current_input.clone()).is_ok() {
+                            return Ok((current_input, results));
                         } else {
                             // Neither separator nor end condition could be parsed
                             return Err(err);
@@ -648,8 +648,8 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
 
             loop {
                 // Check if the end condition is met
-                if let Ok((end_input, _)) = end.eval(current_input.clone()) {
-                    return Ok((end_input, results));
+                if end.eval(current_input.clone()).is_ok() {
+                    return Ok((current_input, results));
                 }
 
                 // Try to parse separator followed by an item
@@ -663,8 +663,8 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
                     },
                     Err(err) => {
                         // If we can't parse a separator, check if end condition is met
-                        if let Ok((end_input, _)) = end.eval(current_input.clone()) {
-                            return Ok((end_input, results));
+                        if end.eval(current_input.clone()).is_ok() {
+                            return Ok((current_input, results));
                         } else {
                             // Neither separator nor end condition could be parsed
                             return Err(err);
@@ -1044,13 +1044,6 @@ where
     ///
     /// This is useful for flattening the result of parser combinators
     /// that produce nested `Parsec` values.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().many().collect::<Parsec<_, _, String>>().join();
-    /// ```
     pub fn join(self) -> Parsec<S, E, A> {
         Parsec::new(move |input: S| {
             let (next_input, parser) = self.eval(input)?;
@@ -1068,13 +1061,6 @@ where
     ///
     /// This is useful for applying a series of parsers in order and
     /// collecting their results.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = (alpha() | digit()).many().sequence();
-    /// ```
     pub fn sequence(self) -> Parsec<S, E, Vec<A>> {
         Parsec::new(move |input: S| {
             let (mut current_input, parsers) = self.eval(input)?;
@@ -1319,6 +1305,13 @@ pub fn char<S: LexIterTrait + 'static, E: ParserError + 'static>(
     satisfy::<S, E, _>(move |c: &char| *c == expected).expected(expected)
 }
 
+pub fn state<S: LexIterTrait + 'static, E: ParserError + 'static>() -> Parsec<S, E, LexIterState> {
+    Parsec::new(move |input: S| {
+        let state = input.get_state();
+        Ok((input, state))
+    })
+}
+
 impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, E, Result<A, E>> {
     pub fn unwrap(self) -> Parsec<S, E, A>
     where
@@ -1341,6 +1334,20 @@ impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static> Bi
 
     fn bitor(self, other: Self) -> Self::Output {
         self.or(other)
+    }
+}
+
+impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static, B: 'static>
+    BitAnd<Parsec<S, E, B>> for Parsec<S, E, A>
+{
+    type Output = Parsec<S, E, (A, B)>;
+
+    fn bitand(self, other: Parsec<S, E, B>) -> Self::Output {
+        Parsec::new(move |input: S| {
+            let (next_input, value_a) = self.eval(input.clone())?;
+            let (final_input, value_b) = other.eval(next_input)?;
+            Ok((final_input, (value_a, value_b)))
+        })
     }
 }
 

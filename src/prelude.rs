@@ -33,7 +33,7 @@ pub use crate::parsec::{BasicParser, BuildParser, Parsec};
 // Essential parsing functions
 pub use crate::parsec::{
     alpha, alphanumeric, any, char, decimal_digit, digit, eof, fail, hex_digit, newline,
-    octal_digit, pure, satisfy, space,
+    octal_digit, pure, satisfy,
 };
 
 // Error handling

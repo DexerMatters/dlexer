@@ -1,6 +1,9 @@
 pub mod errors;
 pub mod lex;
 pub mod parsec;
+pub mod prelude;
+
+mod examples;
 
 #[macro_export]
 macro_rules! map {
@@ -23,12 +26,8 @@ macro_rules! do_parse {
         $m.bind(move |$v| do_parse!($($rest)*))
     };
 
-    (let% $v:ident = $m:expr; $($rest:tt)*) => {
-        {let $v = $m; do_parse!($($rest)*)}
-    };
-
-    (let $v:ident = $m:expr; $($rest:tt)*) => {
-        {let $v = $m; do_parse!($($rest)*)}
+    (let $v:ident $(:$t: ty)? = $m:expr; $($rest:tt)*) => {
+        {let $v $(:$t)? = $m; do_parse!($($rest)*)}
     };
 
     ($m:expr; $($rest:tt)*) => {
@@ -38,9 +37,10 @@ macro_rules! do_parse {
 
 #[cfg(test)]
 mod tests {
+    #![allow(dead_code)]
 
     use crate::{
-        lex::{CharSkipper, LineSkipper, token},
+        lex::{CharSkipper, LineSkipper, WhitespaceSkipper, symbol, token},
         parsec::*,
     };
 
@@ -55,7 +55,7 @@ mod tests {
         }
 
         // Identifier parsing example
-        let ident = token(do_parse!(
+        let ident: With<P, AST> = token(do_parse!(
             let% initial = (alpha() | char('_'));
             let% rest    = alphanumeric().many().collect::<String>();
             let  result  = format!("{}{}", initial, rest);
@@ -74,8 +74,8 @@ mod tests {
 
         // Boolean parsing example
         let boolean = token(map!(
-            P::symbol("true") => AST::Boolean(true),
-            P::symbol("false") => AST::Boolean(false)
+            symbol("true") => AST::Boolean(true),
+            symbol("false") => AST::Boolean(false)
         ));
 
         let p = (boolean | ident).sep_till(char(','), eof());
@@ -103,6 +103,18 @@ mod tests {
         ) {
             Ok(a) => println!("Parsed block: {:?}", a),
             Err(e) => println!("Error parsing block: {}", e),
+        }
+    }
+
+    #[test]
+    fn util_test() {
+        let p: With<P, _> = token(any().many1_till(char('<')).collect::<String>());
+        let input = "fo o < bar";
+        match p.parse(input, WhitespaceSkipper) {
+            Ok(a) => {
+                println!("Parsed successfully: {:?}", a);
+            }
+            Err(e) => println!("{}", e),
         }
     }
 }
