@@ -41,7 +41,7 @@ mod tests {
 
     use crate::{
         lex::{CharSkipper, LineSkipper, WhitespaceSkipper, symbol, token},
-        parsec::*,
+        parsec::{extra::indent_block, *},
     };
 
     type P = BasicParser;
@@ -91,16 +91,25 @@ mod tests {
 
     #[test]
     fn block_test() {
-        let p: With<P, _> = alpha()
-            .many()
-            .collect::<String>()
-            .sep1_till(char(';'), eof());
+        #[derive(Debug, Clone)]
+        enum Expr {
+            Identifier(String),
+            Block(String, Vec<Expr>),
+        }
+        fn ident() -> With<P, Expr> {
+            alpha().many().collect().map(Expr::Identifier)
+        }
+        fn block() -> With<P, Expr> {
+            (alpha().many().collect() + indent_block(rec(parse)))
+                .map(|(name, body)| Expr::Block(name, body))
+        }
+
+        fn parse() -> With<P, Expr> {
+            block() | ident()
+        }
 
         let path = "/home/dexer/Repos/rust/dlexer/tests/test.txt";
-        match p.parse_file(
-            path,
-            [LineSkipper("//").into(), CharSkipper(['\n', ' ']).into()],
-        ) {
+        match parse().parse_file(path, [LineSkipper("//").into(), CharSkipper([' ']).into()]) {
             Ok(a) => println!("Parsed block: {:?}", a),
             Err(e) => println!("Error parsing block: {}", e),
         }
@@ -113,6 +122,33 @@ mod tests {
         match p.parse(input, WhitespaceSkipper) {
             Ok(a) => {
                 println!("Parsed successfully: {:?}", a);
+            }
+            Err(e) => println!("{}", e),
+        }
+    }
+
+    #[test]
+    fn escape_test() {
+        let escapes: With<P, _> = map!(
+            symbol("\\n") => "\n",
+            symbol("\\t") => "\t",
+            symbol("\\r") => "\r",
+            symbol("\\\\") => "\\",
+            symbol("\\\"") => "\""
+        );
+
+        let string = token(
+            (escapes.into() | any().not('\"').into())
+                .many()
+                .between(char('"'), char('"'))
+                & |s: Vec<String>| s.join(""),
+        );
+
+        let result = string
+            .test(r#""This is a string with an escape: \n and a quote: \" and a backslash: \\""#);
+        match result {
+            Ok(a) => {
+                println!("Parsed successfully:\n {}", a);
             }
             Err(e) => println!("{}", e),
         }

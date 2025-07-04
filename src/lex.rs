@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::str::Chars;
 
 use crate::errors::ParserError;
-use crate::parsec::{Parsec, digit};
+use crate::parsec::{Parsec, char, digit, fail, pure};
 
 pub trait Skipper {
     fn next(&self, state: &mut LexIterState) -> Option<char>;
@@ -324,6 +324,20 @@ impl LexIterState {
     }
 }
 
+impl Default for LexIterState {
+    fn default() -> Self {
+        LexIterState {
+            text: Rc::default(),
+            current_line: 1,
+            current_column: 0,
+            current_pos: 0,
+            current_indent: 0,
+            indent_flag: true, // Start with indent flag set
+            position: 0,
+        }
+    }
+}
+
 pub struct LexIter {
     pub(crate) skipper: Box<dyn Skipper>,
     pub(crate) state: LexIterState,
@@ -418,13 +432,68 @@ impl<E: ParserError + 'static, A: 'static> Parsec<LexIter, E, A> {
     }
 }
 
-pub fn integer<E: ParserError + 'static>(radix: u32) -> Parsec<LexIter, E, i64> {
+pub fn integer<E: ParserError + Clone + 'static>(radix: u32) -> Parsec<LexIter, E, i64> {
     token(
         digit(radix)
             .many1()
             .collect::<String>()
-            .map(move |s| i64::from_str_radix(&s, radix).unwrap())
+            .bind(move |s| {
+                if let Ok(num) = i64::from_str_radix(&s, radix) {
+                    pure(num)
+                } else {
+                    fail(E::unexpected(
+                        (LexIterState::default(), LexIterState::default()),
+                        &s,
+                    ))
+                }
+            })
             .expected("integer"),
+    )
+}
+
+pub fn float<E: ParserError + Clone + 'static>() -> Parsec<LexIter, E, f64> {
+    let integral = digit(10).many();
+    let fractional = char('.') >> digit(10).many1();
+    token(
+        integral
+            .concat(fractional)
+            .collect::<String>()
+            .bind(|s| {
+                if let Ok(num) = s.parse::<f64>() {
+                    pure(num)
+                } else {
+                    fail(E::unexpected(
+                        (LexIterState::default(), LexIterState::default()),
+                        &s,
+                    ))
+                }
+            })
+            .expected("float"),
+    )
+}
+
+pub fn number<E: ParserError + Clone + 'static>() -> Parsec<LexIter, E, f64> {
+    let integral = digit(10).many();
+    let fractional = || char('.') >> digit(10).many1();
+    token(
+        (fractional()
+            | integral.concat(
+                fractional() //
+                    .try_()
+                    .unwrap_or_default(),
+            ))
+        .collect::<String>()
+        .bind(|s| {
+            if let Ok(num) = s.parse::<f64>() {
+                pure(num)
+            } else {
+                fail(E::unexpected(
+                    (LexIterState::default(), LexIterState::default()),
+                    &s,
+                ))
+            }
+        })
+        .expected("number"),
     )
 }
 

@@ -1,8 +1,6 @@
 use crate::parsec::{LexIterTrait, alpha, alphanumeric, char};
 use crate::parsec::{Parsec, ParserError};
 
-impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, E, A> {}
-
 pub fn build_ident<const N: usize, S, E>(reserved: [&'static str; N]) -> Parsec<S, E, String>
 where
     S: LexIterTrait + Clone + 'static,
@@ -48,6 +46,13 @@ where
                     input = input_o; // Reset input if not newline
                     let (next_input, value) = parser.eval(input.clone())?;
                     if next_input.get_state().current_indent <= original_indent {
+                        if result.is_empty() {
+                            return Err(E::unexpected(
+                                (original, input.get_state()),
+                                next_input.get_state().current_indent,
+                            )
+                            .with_expected("indent block"));
+                        }
                         return Ok((input, result));
                     }
                     result.push(value);

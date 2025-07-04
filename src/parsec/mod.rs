@@ -48,7 +48,7 @@ pub mod extra;
 
 use std::{
     fmt::{Debug, Display},
-    ops::{Add, BitOr},
+    ops::{Add, BitAnd, BitOr, Shl, Shr},
     rc::Rc,
 };
 
@@ -296,7 +296,13 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
     where
         S: Clone,
     {
-        Parsec::new(move |input: S| self.eval(input.clone()).or_else(|_| other.eval(input)))
+        Parsec::new(move |input: S| match self.eval(input.clone()) {
+            Ok((next_input, value)) => Ok((next_input, value)),
+            Err(err) => match other.eval(input) {
+                Ok((next_input, value)) => Ok((next_input, value)),
+                Err(_) => Err(err),
+            },
+        })
     }
 
     /// Optional parser - parses this parser or nothing.
@@ -903,7 +909,7 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
     ///
     /// let parser = alpha().one_of("abc".chars());
     /// ```
-    pub fn one_of<'a>(self, values: impl Iterator<Item = A> + Clone + 'static) -> Parsec<S, E, A>
+    pub fn one_of(self, values: impl Iterator<Item = A> + Clone + 'static) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
         S: Clone,
@@ -932,12 +938,12 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
     /// the unexpected value.
     ///
     /// # Example
-    /// ```rust
+    /// ```
     /// use dlexer::parsec::*;
     ///
     /// let parser = alpha().none_of("abc".chars());
     /// ```
-    pub fn none_of<'a>(self, values: impl Iterator<Item = A> + Clone + 'static) -> Parsec<S, E, A>
+    pub fn none_of(self, values: impl Iterator<Item = A> + Clone + 'static) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
         S: Clone,
@@ -980,7 +986,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
                 "  Position:\t{}:{}",
                 original.current_line, original.current_column
             );
-            println!("  Indentation:\t{}", original.current_indent);
             let mut rest = original
                 .text
                 .get(original.current_pos..)
@@ -1047,6 +1052,14 @@ where
             Ok((next_input, leaked))
         })
     }
+
+    pub fn trim(self) -> Parsec<S, E, String> {
+        Parsec::new(move |input: S| {
+            let (next_input, value) = self.eval(input)?;
+            let trimmed = value.trim().to_string();
+            Ok((next_input, trimmed))
+        })
+    }
 }
 
 impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, E, Parsec<S, E, A>>
@@ -1086,6 +1099,34 @@ where
             }
 
             Ok((current_input, results))
+        })
+    }
+}
+
+impl<const N: usize, S: LexIterTrait + 'static, E: ParserError + 'static, A: Debug + 'static>
+    Parsec<S, E, [Parsec<S, E, A>; N]>
+where
+    S: Clone,
+{
+    /// Sequence a list of parsers, collecting the results in an array.
+    ///
+    /// This is useful for applying a series of parsers in order and
+    /// collecting their results.
+    pub fn sequence(self) -> Parsec<S, E, [A; N]> {
+        Parsec::new(move |input: S| {
+            let (mut current_input, parsers) = self.eval(input)?;
+            let mut results = Vec::with_capacity(N);
+
+            for parser in parsers.into_iter() {
+                let (next_input, value) = parser.eval(current_input)?;
+                results.push(value);
+                current_input = next_input;
+            }
+
+            // Convert Vec to array
+            let array = results.try_into().unwrap();
+
+            Ok((current_input, array))
         })
     }
 }
@@ -1150,6 +1191,16 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
             let (final_input, other_values) = other.eval(next_input)?;
             values.extend(other_values);
             Ok((final_input, values))
+        })
+    }
+}
+
+impl<S: LexIterTrait + 'static, E: ParserError + 'static> Parsec<S, E, Vec<String>> {
+    pub fn trim(self) -> Parsec<S, E, Vec<String>> {
+        Parsec::new(move |input: S| {
+            let (next_input, mut values) = self.eval(input)?;
+            values.retain_mut(|s| !s.is_empty());
+            Ok((next_input, values))
         })
     }
 }
@@ -1338,6 +1389,34 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
             }
         })
     }
+
+    pub fn unwrap_or(self, default: A) -> Parsec<S, E, A>
+    where
+        S: Clone,
+        A: Clone,
+    {
+        Parsec::new(move |input: S| {
+            let (next_input, result) = self.eval(input)?;
+            match result {
+                Ok(value) => Ok((next_input, value)),
+                Err(_) => Ok((next_input, default.clone())),
+            }
+        })
+    }
+
+    pub fn unwrap_or_default(self) -> Parsec<S, E, A>
+    where
+        S: Clone,
+        A: Default,
+    {
+        Parsec::new(move |input: S| {
+            let (next_input, result) = self.eval(input)?;
+            match result {
+                Ok(value) => Ok((next_input, value)),
+                Err(_) => Ok((next_input, A::default())),
+            }
+        })
+    }
 }
 
 impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static> BitOr
@@ -1357,6 +1436,41 @@ impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static, B:
 
     fn add(self, other: Parsec<S, E, B>) -> Self::Output {
         self.pair(other)
+    }
+}
+
+impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static, B: 'static>
+    Shr<Parsec<S, E, B>> for Parsec<S, E, A>
+{
+    type Output = Parsec<S, E, B>;
+
+    fn shr(self, other: Parsec<S, E, B>) -> Self::Output {
+        self.then(other)
+    }
+}
+
+impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static, B: 'static>
+    Shl<Parsec<S, E, B>> for Parsec<S, E, A>
+{
+    type Output = Parsec<S, E, A>;
+
+    fn shl(self, other: Parsec<S, E, B>) -> Self::Output {
+        self.with(other)
+    }
+}
+
+impl<
+    S: LexIterTrait + Clone + 'static,
+    F: Fn(A) -> B + 'static,
+    E: ParserError + 'static,
+    A: 'static,
+    B: 'static,
+> BitAnd<F> for Parsec<S, E, A>
+{
+    type Output = Parsec<S, E, B>;
+
+    fn bitand(self, other: F) -> Self::Output {
+        self.map(other)
     }
 }
 

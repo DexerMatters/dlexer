@@ -2,9 +2,9 @@
 
 use crate::{
     do_parse,
-    lex::{symbol, token},
+    lex::{number, symbol, token},
     map,
-    parsec::{BasicParser, With, any, char, decimal_digit, pure},
+    parsec::{BasicParser, With, any, char, pure},
     prelude::build_ident,
 };
 
@@ -45,38 +45,40 @@ pub fn value() -> With<P, XmlValue> {
     let boolean: With<P, _> = map!(
         symbol("true") => XmlValue::Boolean(true),
         symbol("false") => XmlValue::Boolean(false)
-    );
+    )
+    .expected("boolean");
+
+    let esc = char('\\')
+        >> map!(
+            char('"') => '"',
+            char('n') => '\n',
+            char('t') => '\t',
+            char('\\') => '\\',
+            char('\"') => '\"'
+        );
 
     let string: With<P, _> = token(
-        any()
-            .not('"')
+        (esc | any().not('"'))
             .many()
             .between(char('"'), char('"'))
             .collect::<String>()
-            .map(XmlValue::String),
+            & XmlValue::String,
     )
     .expected("string");
 
-    let integer = || decimal_digit().many1();
-    let fractional = char('.').extend(integer()) | pure(Vec::new());
-    let number: With<P, _> = token(
-        integer()
-            .concat(fractional)
-            .collect::<String>()
-            .map(|s| XmlValue::Number(s.parse().unwrap())),
-    );
+    let number: With<P, _> = number().expected("number") & XmlValue::Number;
 
     boolean | string | number
 }
 
 pub fn attribute() -> With<P, XmlAttribute> {
-    (ident() + symbol("=").then(value())).map(|(name, value)| XmlAttribute { name, value })
+    ident() + (symbol("=") >> value()) & |(name, value)| XmlAttribute { name, value }
 }
 
 pub fn node() -> With<P, XmlNode> {
     let element = do_parse!(
-        let% label = char('<').then(ident()).leak();
-        let% attrs = attribute().many().with(char('>'));
+        let% label = char('<') >> ident().leak();
+        let% attrs = attribute().many() << char('>');
         let% children = node().many_till(symbol("</"));
         symbol(label).between(symbol("</"), char('>'));
         pure(XmlNode::Element(
@@ -87,14 +89,25 @@ pub fn node() -> With<P, XmlNode> {
             }
         ))
     );
-    let comment = any()
-        .many()
+    let comment = token(any().many_till(symbol("-->")))
         .between(symbol("<!--"), symbol("-->"))
         .collect::<String>()
-        .map(|text| XmlNode::Comment(text));
-    let text = token(any().many1_till(symbol("\n") | symbol("</")))
+        .trim()
+        & XmlNode::Comment;
+
+    let esc = char('&')
+        >> map!(
+            symbol("lt") => '<',
+            symbol("gt") => '>',
+            symbol("amp") => '&',
+            symbol("quot") => '"',
+            symbol("apos") => '\''
+        )
+        << char(';');
+    let text = token((esc | any().none_of("\n<>".chars())).many1())
         .collect::<String>()
-        .map(XmlNode::Text);
+        .trim()
+        & XmlNode::Text;
     element | comment | text
 }
 
@@ -106,6 +119,7 @@ mod test {
     fn test_xml_parser() {
         let xml = r#"
         <note>
+        <!-- This is a comment -->
             <to color="red" weight=80>
                 Tove
             </to>
@@ -116,7 +130,7 @@ mod test {
                 Reminder
             </heading>
             <body>
-                Don't forget me this weekend!
+                Don't forget me this weekend! &lt;Escaped&gt;
             </body>
         </note>
     "#;
