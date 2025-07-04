@@ -70,17 +70,22 @@ pub fn value() -> With<P, XmlValue> {
 }
 
 pub fn attribute() -> With<P, XmlAttribute> {
-    (ident() & symbol("=").then(value())).map(|(name, value)| XmlAttribute { name, value })
+    (ident() + symbol("=").then(value())).map(|(name, value)| XmlAttribute { name, value })
 }
 
 pub fn node() -> With<P, XmlNode> {
     let element = do_parse!(
-        let% label = char('<').then(ident());
-        let label_: &'static str = Box::leak(label.into_boxed_str());
+        let% label = char('<').then(ident()).leak();
         let% attrs = attribute().many().with(char('>'));
         let% children = node().many_till(symbol("</"));
-        symbol(label_).between(symbol("</"), char('>'));
-        pure(XmlNode::Element(XmlElement { name: label_.to_string(), attributes: attrs.clone(), children }))
+        symbol(label).between(symbol("</"), char('>'));
+        pure(XmlNode::Element(
+            XmlElement {
+                name: label.to_string(),
+                attributes: attrs.clone(),
+                children
+            }
+        ))
     );
     let comment = any()
         .many()
@@ -101,10 +106,18 @@ mod test {
     fn test_xml_parser() {
         let xml = r#"
         <note>
-            <to color="red">Tove</to>
-            <from>Jani</from>
-            <heading>Reminder</heading>
-            <body>Don't forget me this weekend!</body>
+            <to color="red" weight=80>
+                Tove
+            </to>
+            <from>
+                Jani
+            </from>
+            <heading>
+                Reminder
+            </heading>
+            <body>
+                Don't forget me this weekend!
+            </body>
         </note>
     "#;
 

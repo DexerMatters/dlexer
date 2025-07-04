@@ -48,7 +48,7 @@ pub mod extra;
 
 use std::{
     fmt::{Debug, Display},
-    ops::{BitAnd, BitOr},
+    ops::{Add, BitOr},
     rc::Rc,
 };
 
@@ -1036,6 +1036,19 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
     }
 }
 
+impl<S: LexIterTrait + 'static, E: ParserError + 'static> Parsec<S, E, String>
+where
+    S: Clone,
+{
+    pub fn leak(self) -> Parsec<S, E, &'static str> {
+        Parsec::new(move |input: S| {
+            let (next_input, value) = self.eval(input)?;
+            let leaked: &'static str = Box::leak(value.into_boxed_str());
+            Ok((next_input, leaked))
+        })
+    }
+}
+
 impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, E, Parsec<S, E, A>>
 where
     S: Clone,
@@ -1338,16 +1351,12 @@ impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static> Bi
 }
 
 impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static, B: 'static>
-    BitAnd<Parsec<S, E, B>> for Parsec<S, E, A>
+    Add<Parsec<S, E, B>> for Parsec<S, E, A>
 {
     type Output = Parsec<S, E, (A, B)>;
 
-    fn bitand(self, other: Parsec<S, E, B>) -> Self::Output {
-        Parsec::new(move |input: S| {
-            let (next_input, value_a) = self.eval(input.clone())?;
-            let (final_input, value_b) = other.eval(next_input)?;
-            Ok((final_input, (value_a, value_b)))
-        })
+    fn add(self, other: Parsec<S, E, B>) -> Self::Output {
+        self.pair(other)
     }
 }
 
