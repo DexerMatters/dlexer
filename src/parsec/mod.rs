@@ -1,49 +1,3 @@
-//! # Parser Combinator Core
-//!
-//! This module implements the core parser combinator functionality, providing
-//! both monadic and applicative interfaces for building complex parsers from
-//! simple components.
-//!
-//! ## Key Concepts
-//!
-//! - **Parser**: A function that consumes input and produces a result
-//! - **Combinator**: A function that combines parsers to create new parsers
-//! - **Monadic interface**: Sequential composition with `bind` and `do_parse!`
-//! - **Applicative interface**: Pure functional composition with `apply`
-//!
-//! ## Common Patterns
-//!
-//! ```rust
-//! use dlexer::parsec::*;
-//!
-//! // Monadic style - sequential parsing
-//! let parser1 = do_parse!(
-//!     let% name = alpha().many().collect::<String>();
-//!     let% _ = char('=');
-//!     let% value = digit().many().collect::<String>();
-//!     pure((name, value))
-//! );
-//!
-//! // Applicative style - pure functional
-//! let parser2 = pure(|name| move |value| (name, value))
-//!     .apply(alpha().many().collect::<String>())
-//!     .apply(digit().many().collect::<String>());
-//!
-//! // Choice and repetition
-//! let items = (alpha() | digit()).sep_by(char(','));
-//! ```
-//!
-//! ## Error Handling
-//!
-//! All parsers can fail with position information:
-//! ```rust
-//! let parser = alpha().expected("letter");
-//! match parser.test("123") {
-//!     Ok(result) => println!("Parsed: {}", result),
-//!     Err(error) => println!("Error: {}", error), // Shows position and expectation
-//! }
-//! ```
-
 pub mod extra;
 
 use std::{
@@ -57,78 +11,33 @@ use crate::{
     lex::{LexIter, LexIterState, LexIterTrait},
 };
 
-/// Type alias for building parsers with custom state and error types.
 pub type BuildParser<S, E> = Parsec<S, E, <S as Iterator>::Item>;
 
-/// Type alias for the standard parser using LexIter and SimpleParserError.
-///
-/// This is the most commonly used parser type in the library, providing
-/// a good balance of functionality and ease of use.
-pub type BasicParser = Parsec<LexIter, SimpleParserError, <LexIter as Iterator>::Item>;
+pub type BasicParser = Parsec<LexIter, SimpleParserError, <LexIter as LexIterTrait>::Item>;
 
-/// Core parser combinator type.
-///
-/// A `Parsec` represents a parser that consumes input of type `S`, can fail
-/// with errors of type `E`, and produces values of type `A` on success.
-///
-/// # Type Parameters
-/// - `S`: The input stream type (must implement `LexIterTrait`)
-/// - `E`: The error type (must implement `ParserError`)
-/// - `A`: The output type produced by successful parsing
-///
-/// # Example
-/// ```rust
-/// use dlexer::parsec::{Parsec, pure};
-/// use dlexer::errors::SimpleParserError;
-/// use dlexer::lex::LexIter;
-///
-/// // Create a parser that always succeeds with value 42
-/// let parser: Parsec<LexIter, SimpleParserError, i32> = pure(42);
-///
-/// // Create a parser that parses a specific character
-/// let char_parser = char('a');
-/// ```
 #[derive(Clone)]
 pub struct Parsec<S: LexIterTrait, E: ParserError, A> {
     run: Rc<dyn Fn(S) -> Result<(S, A), E>>,
 }
 
-impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, E, A> {
-    /// Create a new parser from a parsing function.
-    ///
-    /// # Parameters
-    /// - `run`: A function that takes input and returns either success with
-    ///   remaining input and parsed value, or an error
+impl<S, E, A> Parsec<S, E, A>
+where
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
+{
     pub fn new(run: impl Fn(S) -> Result<(S, A), E> + 'static) -> Self {
         Parsec { run: Rc::new(run) }
     }
 
-    /// Run the parser and return both remaining input and parsed value.
-    ///
-    /// This is the low-level interface that preserves the remaining input
-    /// for further parsing.
     pub fn eval(&self, input: S) -> Result<(S, A), E> {
         (self.run)(input)
     }
 
-    /// Run the parser and return only the parsed value.
-    ///
-    /// This is a convenience method for when you don't need the remaining input.
     pub fn run(&self, input: S) -> Result<A, E> {
         (self.run)(input).map(|(_, value)| value)
     }
 
-    /// Transform the output of a parser using a function (Functor).
-    ///
-    /// This is the fundamental operation for transforming parser results.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let digit_parser = digit();
-    /// let number_parser = digit_parser.map(|c| c.to_digit(10).unwrap());
-    /// ```
     pub fn map<B: 'static, F>(self, f: F) -> Parsec<S, E, B>
     where
         F: Fn(A) -> B + 'static,
@@ -139,22 +48,10 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Add an expectation message to a parser for better error reporting.
-    ///
-    /// When this parser fails, the error will include information about
-    /// what was expected, improving debugging experience.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let identifier = alpha().many().collect::<String>()
-    ///     .expected("identifier");
-    /// ```
     pub fn expected<T>(self, expected: T) -> Parsec<S, E, A>
     where
         T: Display + Clone + 'static,
-        E: ParserError + 'static,
+        E: ParserError<Context = S::Context> + 'static,
     {
         Parsec::new(move |input: S| {
             let original_state = input.get_state();
@@ -171,20 +68,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Monadic bind operation for sequential parser composition.
-    ///
-    /// This allows you to use the result of one parser to determine
-    /// what parser to run next.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let dynamic_parser = digit().bind(|d| {
-    ///     let count = d.to_digit(10).unwrap() as usize;
-    ///     alpha().times(count) // Parse 'count' letters
-    /// });
-    /// ```
     pub fn bind<B: 'static, F>(self, f: F) -> Parsec<S, E, B>
     where
         F: Fn(A) -> Parsec<S, E, B> + 'static,
@@ -195,19 +78,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Applicative apply operation for pure functional composition.
-    ///
-    /// This allows you to apply a function parser to an argument parser,
-    /// useful for building up complex data structures.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let pair_parser = pure(|x| move |y| (x, y))
-    ///     .apply(digit())
-    ///     .apply(alpha());
-    /// ```
     pub fn apply<B: 'static, R: 'static>(self, arg: Parsec<S, E, B>) -> Parsec<S, E, R>
     where
         A: FnOnce(B) -> R + 'static,
@@ -219,16 +89,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Sequential composition - run this parser then another, keeping the second result.
-    ///
-    /// This is useful when you need to parse and discard a delimiter or keyword.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let after_arrow = symbol("->").then(alpha().many().collect::<String>());
-    /// ```
     pub fn then<B: 'static>(self, other: Parsec<S, E, B>) -> Parsec<S, E, B> {
         Parsec::new(move |input| {
             let (next_input, _) = self.eval(input)?;
@@ -236,16 +96,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Sequential composition - run this parser then another, keeping the first result.
-    ///
-    /// This is useful when you need to parse something followed by a delimiter.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let terminated = alpha().many().collect::<String>().with(char(';'));
-    /// ```
     pub fn with<B: 'static>(self, other: Parsec<S, E, B>) -> Parsec<S, E, A> {
         Parsec::new(move |input| {
             let (next_input, value) = self.eval(input)?;
@@ -254,18 +104,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Parse between two delimiters.
-    ///
-    /// This parser requires that the input starts with the `left` parser
-    /// and ends with the `right` parser. The result is the value of the
-    /// inner parser (usually `self`).
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().between(char('('), char(')'));
-    /// ```
     pub fn between<B: 'static, C: 'static>(
         self,
         left: Parsec<S, E, B>,
@@ -282,16 +120,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Try to parse with this parser, and if it fails, try the other parser.
-    ///
-    /// This implements a logical OR between two parsers.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().or(digit());
-    /// ```
     pub fn or(self, other: Parsec<S, E, A>) -> Parsec<S, E, A>
     where
         S: Clone,
@@ -305,16 +133,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Optional parser - parses this parser or nothing.
-    ///
-    /// The result is `Some(value)` if this parser succeeds, or `None` if it fails.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().opt();
-    /// ```
     pub fn opt(self) -> Parsec<S, E, Option<A>>
     where
         S: Clone,
@@ -325,16 +143,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Parse one occurrence of this parser.
-    ///
-    /// This is useful for parsers that should match exactly once.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().one();
-    /// ```
     pub fn one(self) -> Parsec<S, E, Vec<A>> {
         Parsec::new(move |input: S| {
             let (next_input, value) = self.eval(input)?;
@@ -342,18 +150,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Attempt to parse with this parser, returning the result wrapped in `Ok`,
-    /// or the error wrapped in `Err` if it fails.
-    ///
-    /// This is useful for parsers that you want to ensure always succeed
-    /// or fail in a controlled manner.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().try_();
-    /// ```
     pub fn try_(self) -> Parsec<S, E, Result<A, E>>
     where
         S: Clone,
@@ -364,17 +160,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Parse zero or more occurrences of this parser.
-    ///
-    /// This will continue parsing until the parser fails, collecting
-    /// all results in a vector.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().many();
-    /// ```
     pub fn many(self) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -390,17 +175,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Parse one or more occurrences of this parser.
-    ///
-    /// This is similar to `many1`, but it will fail if the parser does not
-    /// match at least once.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().many1();
-    /// ```
     pub fn many1(self) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -419,17 +193,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Parse until the end parser succeeds, collecting results in a vector.
-    ///
-    /// This will parse as many occurrences of this parser as possible until
-    /// the `end` parser succeeds.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().many_till(char(';'));
-    /// ```
     pub fn many_till<B: 'static>(self, end: Parsec<S, E, B>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -459,17 +222,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Parse one or more occurrences of this parser until the end parser succeeds.
-    ///
-    /// This is similar to `many_till`, but it requires at least one successful
-    /// parse of this parser.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().many1_till(char(';'));
-    /// ```
     pub fn many1_till<B: 'static>(self, end: Parsec<S, E, B>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -494,16 +246,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Parse separated by a separator parser, collecting results in a vector.
-    ///
-    /// This will parse occurrences of this parser separated by the `sep` parser.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().sep(char(','));
-    /// ```
     pub fn sep<T: 'static>(self, sep: Parsec<S, E, T>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -530,17 +272,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
             Ok((current_input, results))
         })
     }
-    /// Parse one or more occurrences of this parser separated by a separator parser.
-    ///
-    /// This is similar to `sep`, but it requires at least one successful parse
-    /// of this parser.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().sep1(char(','));
-    /// ```
     pub fn sep1(self, sep: Parsec<S, E, S::Item>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -561,17 +292,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Parse separated by a separator parser until an end parser succeeds.
-    ///
-    /// This will parse occurrences of this parser separated by the `sep` parser,
-    /// and stop when the `end` parser succeeds.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().sep_till(char(','), char(';'));
-    /// ```
     pub fn sep_till<T: 'static, U: 'static>(
         self,
         sep: Parsec<S, E, T>,
@@ -627,18 +347,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Parse one or more occurrences of this parser separated by a separator parser
-    /// until an end parser succeeds.
-    ///
-    /// This is similar to `sep_till`, but it requires at least one successful parse
-    /// of this parser.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().sep1_till(char(','), char(';'));
-    /// ```
     pub fn sep1_till<T: 'static, U: 'static>(
         self,
         sep: Parsec<S, E, T>,
@@ -681,17 +389,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Left-associative parsing with a binary operator.
-    ///
-    /// This will apply the operator between the results of this parser,
-    /// accumulating the result.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let sum_parser = digit().chain(op('+'), 0);
-    /// ```
     pub fn chain<F, B>(self, op: Parsec<S, E, F>, init: A) -> Parsec<S, E, A>
     where
         S: Clone,
@@ -716,17 +413,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Right-associative parsing with a binary operator.
-    ///
-    /// This will apply the operator between the results of this parser,
-    /// accumulating the result, but in a right-associative manner.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let sum_parser = digit().chain_right(op('+'), 0);
-    /// ```
     pub fn chain_right<F>(self, op: Parsec<S, E, F>, init: A) -> Parsec<S, E, A>
     where
         S: Clone,
@@ -741,7 +427,7 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         ) -> Result<(S, A), E>
         where
             S: Clone + 'static,
-            E: ParserError + 'static,
+            E: ParserError<Context = S::Context> + 'static,
             F: Fn(A, A) -> A + Clone + 'static,
             A: Clone + 'static,
         {
@@ -763,16 +449,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         Parsec::new(move |input: S| parse_rec(&parser, &op, input, &init))
     }
 
-    /// Parse a fixed pair of values with two parsers.
-    ///
-    /// This runs both parsers sequentially and collects their results in a tuple.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().pair(digit());
-    /// ```
     pub fn pair<B: 'static>(self, other: Parsec<S, E, B>) -> Parsec<S, E, (A, B)>
     where
         S: Clone,
@@ -784,16 +460,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Extend the result of this parser with the result of another parser.
-    ///
-    /// This is useful for combining parsers that produce parts of a data structure.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let extended_parser = alpha().extend(digit().many());
-    /// ```
     pub fn extend(self, other: Parsec<S, E, Vec<A>>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -806,17 +472,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Hold the result of this parser and apply a predicate function.
-    ///
-    /// This parser will only succeed if the predicate returns true for the
-    /// parsed value. If it fails, the error will include the expected predicate.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let even_parser = digit().hold(|&d| d % 2 == 0);
-    /// ```
     pub fn hold<F>(self, f: F) -> Parsec<S, E, A>
     where
         F: Fn(&A) -> bool + 'static,
@@ -837,17 +492,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Negate the result of this parser, expecting a different value.
-    ///
-    /// This parser will succeed if the parsed value is not equal to the given
-    /// value. If it fails, the error will include the expected value.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let not_a_parser = alpha().not('a');
-    /// ```
     pub fn not(self, value: A) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
@@ -867,17 +511,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Ensure the result of this parser matches a specific value.
-    ///
-    /// This parser will succeed if the parsed value is equal to the given
-    /// value. If it fails, the error will include the expected value.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let a_parser = alpha().is('a');
-    /// ```
     pub fn is(self, value: A) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
@@ -897,18 +530,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Succeed if the parsed value is one of the given set of values.
-    ///
-    /// This parser will succeed if the parsed value matches any value
-    /// from the `values` iterator. If it fails, the error will include
-    /// the expected values.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().one_of("abc".chars());
-    /// ```
     pub fn one_of(self, values: impl Iterator<Item = A> + Clone + 'static) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
@@ -931,18 +552,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Succeed if the parsed value is none of the given set of values.
-    ///
-    /// This parser will succeed if the parsed value does not match any value
-    /// from the `values` iterator. If it fails, the error will include
-    /// the unexpected value.
-    ///
-    /// # Example
-    /// ```
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().none_of("abc".chars());
-    /// ```
     pub fn none_of(self, values: impl Iterator<Item = A> + Clone + 'static) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
@@ -962,77 +571,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Debugging parser that prints input and output details.
-    ///
-    /// This parser is useful for development and debugging purposes,
-    /// as it prints the state of the input before and after parsing,
-    /// as well as the parsed value.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().dbg();
-    /// ```
-    pub fn dbg(self) -> Parsec<S, E, A>
-    where
-        S: Clone,
-        A: Debug,
-    {
-        Parsec::new(move |input: S| {
-            let original = input.get_state();
-            println!("Input:");
-            println!(
-                "  Position:\t{}:{}",
-                original.current_line, original.current_column
-            );
-            let mut rest = original
-                .text
-                .get(original.current_pos..)
-                .unwrap_or("End of input");
-            if rest.len() > 8 {
-                rest = &rest[..8];
-                println!("  Parsing:\t{:?}...", rest);
-            } else {
-                println!("  Parsing:\t{:?}", rest);
-            }
-
-            let result = self.eval(input.clone());
-            match result {
-                Ok((next_input, value)) => {
-                    let next = next_input.get_state();
-                    println!("Output:");
-                    println!("  Value:\t{:?}", value);
-                    println!("  Position:\t{}:{}", next.current_line, next.current_column);
-                    println!("  Indentation:\t{}", next.current_indent);
-                    let mut next_rest = next.text.get(next.current_pos..).unwrap_or("End of input");
-                    if next_rest.len() > 8 {
-                        next_rest = &next_rest[..8];
-                        println!("  Remaining:\t{:?}...", next_rest);
-                    } else {
-                        println!("  Remaining:\t{:?}", next_rest);
-                    }
-                    Ok((next_input, value))
-                }
-                Err(error) => {
-                    println!("Error:");
-                    println!("  Message:\t{}", error);
-                    Err(error)
-                }
-            }
-        })
-    }
-
-    /// Convert the output of this parser to a different type.
-    ///
-    /// This is a convenience method that uses `map` under the hood.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = digit().into::<i32>();
-    /// ```
     pub fn into<B: 'static>(self) -> Parsec<S, E, B>
     where
         A: Into<B>,
@@ -1041,9 +579,10 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
     }
 }
 
-impl<S: LexIterTrait + 'static, E: ParserError + 'static> Parsec<S, E, String>
+impl<S, E> Parsec<S, E, String>
 where
-    S: Clone,
+    S: LexIterTrait + Clone + 'static,
+    E: ParserError<Context = S::Context> + 'static,
 {
     pub fn leak(self) -> Parsec<S, E, &'static str> {
         Parsec::new(move |input: S| {
@@ -1062,14 +601,12 @@ where
     }
 }
 
-impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, E, Parsec<S, E, A>>
+impl<S, E, A> Parsec<S, E, Parsec<S, E, A>>
 where
-    S: Clone,
+    S: LexIterTrait + Clone + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
 {
-    /// Join nested parsers into a single parser.
-    ///
-    /// This is useful for flattening the result of parser combinators
-    /// that produce nested `Parsec` values.
     pub fn join(self) -> Parsec<S, E, A> {
         Parsec::new(move |input: S| {
             let (next_input, parser) = self.eval(input)?;
@@ -1078,15 +615,12 @@ where
     }
 }
 
-impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static>
-    Parsec<S, E, Vec<Parsec<S, E, A>>>
+impl<S, E, A> Parsec<S, E, Vec<Parsec<S, E, A>>>
 where
-    S: Clone,
+    S: LexIterTrait + Clone + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
 {
-    /// Sequence a list of parsers, collecting the results in a vector.
-    ///
-    /// This is useful for applying a series of parsers in order and
-    /// collecting their results.
     pub fn sequence(self) -> Parsec<S, E, Vec<A>> {
         Parsec::new(move |input: S| {
             let (mut current_input, parsers) = self.eval(input)?;
@@ -1103,15 +637,12 @@ where
     }
 }
 
-impl<const N: usize, S: LexIterTrait + 'static, E: ParserError + 'static, A: Debug + 'static>
-    Parsec<S, E, [Parsec<S, E, A>; N]>
+impl<const N: usize, S, E, A> Parsec<S, E, [Parsec<S, E, A>; N]>
 where
-    S: Clone,
+    S: LexIterTrait + Clone + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: Debug + 'static,
 {
-    /// Sequence a list of parsers, collecting the results in an array.
-    ///
-    /// This is useful for applying a series of parsers in order and
-    /// collecting their results.
     pub fn sequence(self) -> Parsec<S, E, [A; N]> {
         Parsec::new(move |input: S| {
             let (mut current_input, parsers) = self.eval(input)?;
@@ -1131,18 +662,12 @@ where
     }
 }
 
-impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, E, Vec<A>> {
-    /// Collect the results of this parser into a different container type.
-    ///
-    /// This uses the `Into` and `FromIterator` traits to convert the
-    /// collected results into the desired container type.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let parser = alpha().many().collect::<Vec<_>>();
-    /// ```
+impl<S, E, A> Parsec<S, E, Vec<A>>
+where
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
+{
     pub fn collect<B: 'static>(self) -> Parsec<S, E, B>
     where
         A: Into<B>,
@@ -1151,17 +676,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         self.map(|vec| vec.into_iter().collect())
     }
 
-    /// Append the result of another parser to this parser's result.
-    ///
-    /// This is useful for combining the results of two parsers into a single
-    /// vector.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let combined_parser = alpha().many().append(digit().many());
-    /// ```
     pub fn append(self, other: Parsec<S, E, A>) -> Parsec<S, E, Vec<A>> {
         Parsec::new(move |input: S| {
             let (next_input, mut values) = self.eval(input)?;
@@ -1171,17 +685,6 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
         })
     }
 
-    /// Concatenate the results of another parser to this parser's results.
-    ///
-    /// This is useful for combining the results of two parsers into a single
-    /// vector, extending the existing results.
-    ///
-    /// # Example
-    /// ```rust
-    /// use dlexer::parsec::*;
-    ///
-    /// let concatenated_parser = alpha().many().concat(digit().many());
-    /// ```
     pub fn concat(self, other: Parsec<S, E, Vec<A>>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -1195,7 +698,11 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
     }
 }
 
-impl<S: LexIterTrait + 'static, E: ParserError + 'static> Parsec<S, E, Vec<String>> {
+impl<S, E> Parsec<S, E, Vec<String>>
+where
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     pub fn trim(self) -> Parsec<S, E, Vec<String>> {
         Parsec::new(move |input: S| {
             let (next_input, mut values) = self.eval(input)?;
@@ -1207,62 +714,28 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static> Parsec<S, E, Vec<Strin
 
 // === Utility Functions ===
 
-/// Create a parser that always succeeds with the given value.
-///
-/// This parser consumes no input and always returns the provided value.
-/// It's useful for creating default values or starting points for parser
-/// composition.
-///
-/// # Example
-/// ```rust
-/// use dlexer::parsec::*;
-///
-/// let parser = pure(42);
-/// assert_eq!(parser.test(""), Ok(42));
-/// ```
-pub fn pure<S: LexIterTrait + 'static, E: ParserError + 'static, T>(value: T) -> Parsec<S, E, T>
+pub fn pure<S, E, T>(value: T) -> Parsec<S, E, T>
 where
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static,
     T: Clone + 'static,
 {
     Parsec::new(move |input| Ok((input, value.clone())))
 }
 
-/// Create a parser that always fails with the given error.
-///
-/// This parser never consumes input and always returns the provided error.
-/// It's useful for creating conditional failures or error scenarios.
-///
-/// # Example
-/// ```rust
-/// use dlexer::parsec::*;
-/// use dlexer::errors::SimpleParserError;
-///
-/// let error = SimpleParserError::new("test".into(), "fail".into(), Default::default());
-/// let parser = fail::<_, _, i32>(error);
-/// ```
-pub fn fail<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static>(
-    error: E,
-) -> Parsec<S, E, A>
+pub fn fail<S, E, A>(error: E) -> Parsec<S, E, A>
 where
-    E: Clone,
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static + Clone,
+    A: 'static,
 {
     Parsec::new(move |_| Err(error.clone()))
 }
 
-/// Parse any single item from the input.
-///
-/// This parser succeeds if there is at least one item left in the input,
-/// returning that item. It fails with an EOF error if the input is empty.
-///
-/// # Example
-/// ```rust
-/// use dlexer::parsec::*;
-///
-/// let parser = any();
-/// // Will parse any character
-/// ```
-pub fn any<S: LexIterTrait + 'static, E: ParserError + 'static>() -> Parsec<S, E, S::Item>
+pub fn any<S, E>() -> Parsec<S, E, S::Item>
 where
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static,
     S::Item: 'static,
 {
     Parsec::new(move |mut input: S| {
@@ -1275,22 +748,10 @@ where
     })
 }
 
-/// Create a parser that succeeds only if the predicate returns true for the next item.
-///
-/// This parser consumes one item from the input if the predicate function
-/// returns true for that item. Otherwise, it fails with an unexpected error.
-///
-/// # Example
-/// ```rust
-/// use dlexer::parsec::*;
-///
-/// let digit_parser = satisfy(|c: &char| c.is_ascii_digit());
-/// let vowel_parser = satisfy(|c: &char| "aeiou".contains(*c));
-/// ```
-pub fn satisfy<S: LexIterTrait + 'static, E: ParserError + 'static, F>(
-    f: F,
-) -> Parsec<S, E, S::Item>
+pub fn satisfy<S, E, F>(f: F) -> Parsec<S, E, S::Item>
 where
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static,
     S::Item: Display + 'static,
     F: Fn(&S::Item) -> bool + 'static,
 {
@@ -1308,51 +769,85 @@ where
     })
 }
 
-pub fn item<S: LexIterTrait + 'static, E: ParserError + 'static>(
-    expected: S::Item,
-) -> Parsec<S, E, S::Item>
+pub fn item<S, E>(expected: S::Item) -> Parsec<S, E, S::Item>
 where
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static,
     S::Item: PartialEq + Display + Clone + 'static,
 {
     let expected_ = expected.clone();
     satisfy::<S, E, _>(move |item| *item == expected_).expected(expected)
 }
 
-pub fn decimal_digit<S: LexIterTrait + 'static, E: ParserError + 'static>() -> Parsec<S, E, char> {
+pub fn decimal_digit<S, E>() -> Parsec<S, E, char>
+where
+    S: LexIterTrait<Item = char> + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     satisfy::<S, E, _>(|c: &char| c.is_digit(10)).expected("digit")
 }
 
-pub fn hex_digit<S: LexIterTrait + 'static, E: ParserError + 'static>() -> Parsec<S, E, char> {
+pub fn hex_digit<S, E>() -> Parsec<S, E, char>
+where
+    S: LexIterTrait<Item = char> + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     satisfy::<S, E, _>(|c: &char| c.is_digit(16)).expected("hex digit")
 }
 
-pub fn octal_digit<S: LexIterTrait + 'static, E: ParserError + 'static>() -> Parsec<S, E, char> {
+pub fn octal_digit<S, E>() -> Parsec<S, E, char>
+where
+    S: LexIterTrait<Item = char> + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     satisfy::<S, E, _>(|c: &char| c.is_digit(8)).expected("octal digit")
 }
 
-pub fn digit<S: LexIterTrait + 'static, E: ParserError + 'static>(
-    radix: u32,
-) -> Parsec<S, E, char> {
+pub fn digit<S, E>(radix: u32) -> Parsec<S, E, char>
+where
+    S: LexIterTrait<Item = char> + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     satisfy::<S, E, _>(move |c: &char| c.is_digit(radix)).expected("digit")
 }
 
-pub fn alpha<S: LexIterTrait + 'static, E: ParserError + 'static>() -> Parsec<S, E, char> {
+pub fn alpha<S, E>() -> Parsec<S, E, char>
+where
+    S: LexIterTrait<Item = char> + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     satisfy::<S, E, _>(|c: &char| c.is_alphabetic()).expected("alphabetic character")
 }
 
-pub fn alphanumeric<S: LexIterTrait + 'static, E: ParserError + 'static>() -> Parsec<S, E, char> {
+pub fn alphanumeric<S, E>() -> Parsec<S, E, char>
+where
+    S: LexIterTrait<Item = char> + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     satisfy::<S, E, _>(|c: &char| c.is_alphanumeric()).expected("alphanumeric character")
 }
 
-pub fn whitespace<S: LexIterTrait + 'static, E: ParserError + 'static>() -> Parsec<S, E, char> {
+pub fn whitespace<S, E>() -> Parsec<S, E, char>
+where
+    S: LexIterTrait<Item = char> + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     satisfy::<S, E, _>(|c: &char| c.is_whitespace()).expected("whitespace character")
 }
 
-pub fn newline<S: LexIterTrait + 'static, E: ParserError + 'static>() -> Parsec<S, E, char> {
+pub fn newline<S, E>() -> Parsec<S, E, char>
+where
+    S: LexIterTrait<Item = char> + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     satisfy::<S, E, _>(|c: &char| *c == '\n').expected("newline character")
 }
 
-pub fn eof<S: LexIterTrait + Clone + 'static, E: ParserError + 'static>() -> Parsec<S, E, ()> {
+pub fn eof<S, E>() -> Parsec<S, E, ()>
+where
+    S: LexIterTrait<Item = char> + Clone + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     Parsec::new(move |mut input: S| {
         let original_state = input.get_state();
         if input.next().is_none() {
@@ -1363,20 +858,31 @@ pub fn eof<S: LexIterTrait + Clone + 'static, E: ParserError + 'static>() -> Par
     })
 }
 
-pub fn char<S: LexIterTrait + 'static, E: ParserError + 'static>(
-    expected: char,
-) -> Parsec<S, E, char> {
+pub fn char<S, E>(expected: char) -> Parsec<S, E, char>
+where
+    S: LexIterTrait<Item = char> + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     satisfy::<S, E, _>(move |c: &char| *c == expected).expected(expected)
 }
 
-pub fn state<S: LexIterTrait + 'static, E: ParserError + 'static>() -> Parsec<S, E, LexIterState> {
+pub fn state<S, E>() -> Parsec<S, E, LexIterState<S::Context>>
+where
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+{
     Parsec::new(move |input: S| {
         let state = input.get_state();
         Ok((input, state))
     })
 }
 
-impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, E, Result<A, E>> {
+impl<S, E, A> Parsec<S, E, Result<A, E>>
+where
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
+{
     pub fn unwrap(self) -> Parsec<S, E, A>
     where
         S: Clone,
@@ -1419,8 +925,11 @@ impl<S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static> Parsec<S, 
     }
 }
 
-impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static> BitOr
-    for Parsec<S, E, A>
+impl<S, E, A> BitOr for Parsec<S, E, A>
+where
+    S: LexIterTrait + Clone + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
 {
     type Output = Parsec<S, E, A>;
 
@@ -1429,8 +938,12 @@ impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static> Bi
     }
 }
 
-impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static, B: 'static>
-    Add<Parsec<S, E, B>> for Parsec<S, E, A>
+impl<S, E, A, B> Add<Parsec<S, E, B>> for Parsec<S, E, A>
+where
+    S: LexIterTrait + Clone + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
+    B: 'static,
 {
     type Output = Parsec<S, E, (A, B)>;
 
@@ -1439,8 +952,12 @@ impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static, B:
     }
 }
 
-impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static, B: 'static>
-    Shr<Parsec<S, E, B>> for Parsec<S, E, A>
+impl<S, E, A, B> Shr<Parsec<S, E, B>> for Parsec<S, E, A>
+where
+    S: LexIterTrait + Clone + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
+    B: 'static,
 {
     type Output = Parsec<S, E, B>;
 
@@ -1449,8 +966,12 @@ impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static, B:
     }
 }
 
-impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static, B: 'static>
-    Shl<Parsec<S, E, B>> for Parsec<S, E, A>
+impl<S, E, A, B> Shl<Parsec<S, E, B>> for Parsec<S, E, A>
+where
+    S: LexIterTrait + Clone + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
+    B: 'static,
 {
     type Output = Parsec<S, E, A>;
 
@@ -1459,13 +980,13 @@ impl<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static, B:
     }
 }
 
-impl<
+impl<S, F, E, A, B> BitAnd<F> for Parsec<S, E, A>
+where
     S: LexIterTrait + Clone + 'static,
     F: Fn(A) -> B + 'static,
-    E: ParserError + 'static,
+    E: ParserError<Context = S::Context> + 'static,
     A: 'static,
     B: 'static,
-> BitAnd<F> for Parsec<S, E, A>
 {
     type Output = Parsec<S, E, B>;
 
@@ -1474,11 +995,12 @@ impl<
     }
 }
 
-pub fn rec<F, S: LexIterTrait + 'static, E: ParserError + 'static, A: 'static>(
-    f: F,
-) -> Parsec<S, E, A>
+pub fn rec<F, S, E, A>(f: F) -> Parsec<S, E, A>
 where
     F: Fn() -> Parsec<S, E, A> + 'static,
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
 {
     Parsec::new(move |input: S| {
         let parser = f();
@@ -1486,9 +1008,12 @@ where
     })
 }
 
-pub fn branch<S: LexIterTrait + Clone + 'static, E: ParserError + 'static, A: 'static>(
-    parsers: Vec<Parsec<S, E, A>>,
-) -> Parsec<S, E, A> {
+pub fn branch<S, E, A>(parsers: Vec<Parsec<S, E, A>>) -> Parsec<S, E, A>
+where
+    S: LexIterTrait + Clone + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
+{
     Parsec::new(move |input: S| {
         if parsers.is_empty() {
             return Err(E::eof((input.get_state(), input.get_state())));

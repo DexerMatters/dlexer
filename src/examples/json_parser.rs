@@ -60,15 +60,15 @@ pub fn json_value() -> With<BasicParser, JsonValue> {
 
 #[cfg(test)]
 mod tests {
-    use crate::lex::CharSkipper;
+    use crate::lex::{BlockSkipper, CharSkipper, LineSkipper};
 
     use super::*;
     #[test]
     fn test_json_parser() {
         let parser = json_value();
         let input = r#"{
-            "name": "John",
-            "age": 30,
+            "name": "John", // This is a comment
+            "age": /* This is a block comment */ 30,
             "is_student": false,
             "courses": ["Math", "Science"],
             "address": {
@@ -78,7 +78,14 @@ mod tests {
             "grades": [85.5, 90.0, 78.5],
             "graduated": null
         }"#;
-        let result = parser.parse(input, CharSkipper([' ', '\n', '\t']));
+        let result = parser.parse(
+            input,
+            [
+                CharSkipper(['\n', '\t', ' ']).into(),
+                LineSkipper("//").into(),
+                BlockSkipper("/*", "*/").into(),
+            ],
+        );
         match result {
             Ok(value) => println!("Parsed JSON value: {:#?}", value),
             Err(e) => println!("Error parsing JSON: {}", e),

@@ -3,23 +3,28 @@ use std::fmt::Display;
 use crate::lex::LexIterState;
 
 pub trait ParserError: Display {
-    fn eof(state: (LexIterState, LexIterState)) -> Self
+    type Context: ?Sized;
+    fn eof(state: (LexIterState<Self::Context>, LexIterState<Self::Context>)) -> Self
     where
         Self: Sized,
     {
         Self::unexpected(state, EOFError)
     }
-    fn unexpected<T: Display>(state: (LexIterState, LexIterState), item: T) -> Self;
+    fn unexpected<T: Display>(
+        state: (LexIterState<Self::Context>, LexIterState<Self::Context>),
+        item: T,
+    ) -> Self;
 
     fn with_expected<T: Display>(self, expected: T) -> Self
     where
         Self: Sized;
 
-    fn with_state(self, from: LexIterState, to: LexIterState) -> Self;
+    fn with_state(self, from: LexIterState<Self::Context>, to: LexIterState<Self::Context>)
+    -> Self;
 
-    fn from(&self) -> LexIterState;
+    fn from(&self) -> LexIterState<Self::Context>;
 
-    fn to(&self) -> LexIterState {
+    fn to(&self) -> LexIterState<Self::Context> {
         self.from()
     }
 }
@@ -37,12 +42,16 @@ impl Display for EOFError {
 pub struct SimpleParserError {
     expected: String,
     unexpected: String,
-    from: LexIterState,
-    to: LexIterState,
+    from: LexIterState<str>,
+    to: LexIterState<str>,
 }
 
 impl SimpleParserError {
-    pub fn new(expected: String, unexpected: String, state: (LexIterState, LexIterState)) -> Self {
+    pub fn new(
+        expected: String,
+        unexpected: String,
+        state: (LexIterState<str>, LexIterState<str>),
+    ) -> Self {
         Self {
             expected,
             unexpected,
@@ -53,7 +62,11 @@ impl SimpleParserError {
 }
 
 impl ParserError for SimpleParserError {
-    fn unexpected<T>(state: (LexIterState, LexIterState), item: T) -> Self
+    type Context = str;
+    fn unexpected<T>(
+        state: (LexIterState<Self::Context>, LexIterState<Self::Context>),
+        item: T,
+    ) -> Self
     where
         T: Display,
     {
@@ -67,15 +80,19 @@ impl ParserError for SimpleParserError {
         self.expected = expected.to_string();
         self
     }
-    fn with_state(mut self, from: LexIterState, to: LexIterState) -> Self {
+    fn with_state(
+        mut self,
+        from: LexIterState<Self::Context>,
+        to: LexIterState<Self::Context>,
+    ) -> Self {
         self.from = from;
         self.to = to;
         self
     }
-    fn from(&self) -> LexIterState {
+    fn from(&self) -> LexIterState<Self::Context> {
         self.from.clone()
     }
-    fn to(&self) -> LexIterState {
+    fn to(&self) -> LexIterState<Self::Context> {
         self.to.clone()
     }
 }

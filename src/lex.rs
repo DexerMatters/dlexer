@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::rc::Rc;
 use std::str::Chars;
 
@@ -5,9 +6,9 @@ use crate::errors::ParserError;
 use crate::parsec::{Parsec, char, digit, fail, pure};
 
 pub trait Skipper {
-    fn next(&self, state: &mut LexIterState) -> Option<char>;
+    fn next(&self, state: &mut LexIterState<str>) -> Option<char>;
 
-    fn skip(&self, state: &mut LexIterState) -> usize {
+    fn skip(&self, state: &mut LexIterState<str>) -> usize {
         let original = state.current_pos;
         if let Some(c) = self.next(state) {
             // Push the character back to the buffer
@@ -63,10 +64,10 @@ pub struct NoSkipper;
 
 impl Skipper for NoSkipper {
     // No skipping so always return 0
-    fn skip(&self, _state: &mut LexIterState) -> usize {
+    fn skip(&self, _state: &mut LexIterState<str>) -> usize {
         0
     }
-    fn next(&self, state: &mut LexIterState) -> Option<char> {
+    fn next(&self, state: &mut LexIterState<str>) -> Option<char> {
         state.next_one_char()
     }
     fn clone_box(&self) -> Box<dyn Skipper> {
@@ -79,7 +80,7 @@ pub struct WhitespaceSkipper;
 
 impl Skipper for WhitespaceSkipper {
     // Skip consecutive whitespace (except newline)
-    fn skip(&self, state: &mut LexIterState) -> usize {
+    fn skip(&self, state: &mut LexIterState<str>) -> usize {
         let mut count = 0;
         while let Some(c) = state.next_one_char() {
             if c.is_whitespace() && c != '\n' {
@@ -91,7 +92,7 @@ impl Skipper for WhitespaceSkipper {
         }
         count
     }
-    fn next(&self, state: &mut LexIterState) -> Option<char> {
+    fn next(&self, state: &mut LexIterState<str>) -> Option<char> {
         let _ = Self::skip(self, state);
         state.next_one_char()
     }
@@ -105,7 +106,7 @@ pub struct CharSkipper<const N: usize>(pub [char; N]);
 
 impl<const N: usize> Skipper for CharSkipper<N> {
     // Skip characters contained in self.0
-    fn skip(&self, state: &mut LexIterState) -> usize {
+    fn skip(&self, state: &mut LexIterState<str>) -> usize {
         let mut count = 0;
         while let Some(c) = state.next_one_char() {
             if self.0.contains(&c) {
@@ -117,7 +118,7 @@ impl<const N: usize> Skipper for CharSkipper<N> {
         }
         count
     }
-    fn next(&self, state: &mut LexIterState) -> Option<char> {
+    fn next(&self, state: &mut LexIterState<str>) -> Option<char> {
         let _ = Self::skip(self, state);
         state.next_one_char()
     }
@@ -132,7 +133,7 @@ pub struct LineSkipper(pub &'static str);
 impl Skipper for LineSkipper {
     // Skip a line marker (substring) and then consume all chars until newline is reached;
     // stops before newline so it can be processed later.
-    fn skip(&self, state: &mut LexIterState) -> usize {
+    fn skip(&self, state: &mut LexIterState<str>) -> usize {
         let mut count = 0;
         loop {
             let checkpoint = state.clone();
@@ -151,7 +152,7 @@ impl Skipper for LineSkipper {
         }
         count
     }
-    fn next(&self, state: &mut LexIterState) -> Option<char> {
+    fn next(&self, state: &mut LexIterState<str>) -> Option<char> {
         let _ = Self::skip(self, state);
         state.next_one_char()
     }
@@ -165,7 +166,7 @@ pub struct BlockSkipper(pub &'static str, pub &'static str);
 
 impl Skipper for BlockSkipper {
     // Skip block delimiters (self.0 and self.1) with nested block handling.
-    fn skip(&self, state: &mut LexIterState) -> usize {
+    fn skip(&self, state: &mut LexIterState<str>) -> usize {
         let mut count = 0;
         let mut block_depth = 0;
         loop {
@@ -198,7 +199,7 @@ impl Skipper for BlockSkipper {
         }
         count
     }
-    fn next(&self, state: &mut LexIterState) -> Option<char> {
+    fn next(&self, state: &mut LexIterState<str>) -> Option<char> {
         let _ = Self::skip(self, state);
         state.next_one_char()
     }
@@ -218,7 +219,7 @@ impl Skippers {
 }
 
 impl Skipper for Skippers {
-    fn skip(&self, state: &mut LexIterState) -> usize {
+    fn skip(&self, state: &mut LexIterState<str>) -> usize {
         let original = state.current_pos;
         loop {
             let pos_before = state.current_pos;
@@ -231,7 +232,7 @@ impl Skipper for Skippers {
         }
         state.current_pos.saturating_sub(original)
     }
-    fn next(&self, state: &mut LexIterState) -> Option<char> {
+    fn next(&self, state: &mut LexIterState<str>) -> Option<char> {
         let _ = Self::skip(self, state);
         state.next_one_char()
     }
@@ -242,22 +243,75 @@ impl Skipper for Skippers {
     }
 }
 
-pub trait LexIterTrait: Iterator<Item = char> + Sized {
-    fn get_state(&self) -> LexIterState;
+pub trait LexIterTrait {
+    type Context: ?Sized;
+    type Item;
+    fn get_state(&self) -> LexIterState<Self::Context>;
+    fn next(&mut self) -> Option<Self::Item>;
 }
 
-#[derive(Clone, Debug)]
-pub struct LexIterState {
-    pub text: Rc<str>,
+pub trait RcDefault {
+    fn default() -> Self;
+}
+
+impl RcDefault for Rc<str> {
+    fn default() -> Self {
+        Rc::from("")
+    }
+}
+
+impl<T> RcDefault for Rc<T>
+where
+    T: ?Sized + Default,
+{
+    fn default() -> Self {
+        Rc::new(T::default())
+    }
+}
+
+#[derive(Debug)]
+pub struct LexIterState<T: ?Sized> {
+    pub text: Rc<T>,
     pub current_line: usize,
     pub current_column: usize,
     pub current_pos: usize,
     pub current_indent: usize,
-    indent_flag: bool, // True for indent
-    position: usize,   // Current position in the string
+    indent_flag: bool,
+    position: usize,
 }
 
-impl LexIterState {
+impl<T: ?Sized> Clone for LexIterState<T> {
+    fn clone(&self) -> Self {
+        LexIterState {
+            text: Rc::clone(&self.text),
+            current_line: self.current_line,
+            current_column: self.current_column,
+            current_pos: self.current_pos,
+            current_indent: self.current_indent,
+            indent_flag: self.indent_flag,
+            position: self.position,
+        }
+    }
+}
+
+impl<T: ?Sized> Default for LexIterState<T>
+where
+    Rc<T>: RcDefault,
+{
+    fn default() -> Self {
+        LexIterState {
+            text: RcDefault::default(),
+            current_line: 1,
+            current_column: 0,
+            current_pos: 0,
+            current_indent: 0,
+            indent_flag: true, // Start with indent flag set
+            position: 0,
+        }
+    }
+}
+
+impl LexIterState<str> {
     fn next_one_char(&mut self) -> Option<char> {
         if self.position >= self.text.len() {
             return None;
@@ -324,23 +378,9 @@ impl LexIterState {
     }
 }
 
-impl Default for LexIterState {
-    fn default() -> Self {
-        LexIterState {
-            text: Rc::default(),
-            current_line: 1,
-            current_column: 0,
-            current_pos: 0,
-            current_indent: 0,
-            indent_flag: true, // Start with indent flag set
-            position: 0,
-        }
-    }
-}
-
 pub struct LexIter {
     pub(crate) skipper: Box<dyn Skipper>,
-    pub(crate) state: LexIterState,
+    pub(crate) state: LexIterState<str>,
 }
 
 impl Clone for LexIter {
@@ -370,14 +410,11 @@ impl LexIter {
 }
 
 impl LexIterTrait for LexIter {
-    fn get_state(&self) -> LexIterState {
+    type Context = str;
+    type Item = char;
+    fn get_state(&self) -> LexIterState<Self::Context> {
         self.state.clone()
     }
-}
-
-impl Iterator for LexIter {
-    type Item = char;
-
     fn next(&mut self) -> Option<Self::Item> {
         self.skipper.next(&mut self.state)
     }
@@ -397,9 +434,11 @@ impl From<String> for LexIter {
     }
 }
 
-pub fn token<E: ParserError + 'static, A: 'static>(
-    p: Parsec<LexIter, E, A>,
-) -> Parsec<LexIter, E, A> {
+pub fn token<E, A>(p: Parsec<LexIter, E, A>) -> Parsec<LexIter, E, A>
+where
+    E: ParserError<Context = str> + 'static,
+    A: 'static,
+{
     Parsec::new(move |mut input: LexIter| {
         input.skipper.skip(&mut input.state);
         let original_skipper = input.skipper.clone_box();
@@ -411,7 +450,11 @@ pub fn token<E: ParserError + 'static, A: 'static>(
     })
 }
 
-impl<E: ParserError + 'static, A: 'static> Parsec<LexIter, E, A> {
+impl<E, A> Parsec<LexIter, E, A>
+where
+    E: ParserError<Context = str> + 'static,
+    A: 'static,
+{
     pub fn test<'a>(&self, input: impl Into<String>) -> Result<A, E> {
         let input = LexIter::new(&input.into(), NoSkipper);
         self.run(input)
@@ -430,9 +473,61 @@ impl<E: ParserError + 'static, A: 'static> Parsec<LexIter, E, A> {
         let input = LexIter::new(&content, skipper.as_skipper());
         self.run(input)
     }
+
+    pub fn dbg(self) -> Parsec<LexIter, E, A>
+    where
+        A: Debug,
+    {
+        Parsec::new(move |input: LexIter| {
+            let original = input.get_state();
+            println!("Input:");
+            println!(
+                "  Position:\t{}:{}",
+                original.current_line, original.current_column
+            );
+            let mut rest = original
+                .text
+                .get(original.current_pos..)
+                .unwrap_or("End of input");
+            if rest.len() > 8 {
+                rest = &rest[..8];
+                println!("  Parsing:\t{:?}...", rest);
+            } else {
+                println!("  Parsing:\t{:?}", rest);
+            }
+
+            let result = self.eval(input.clone());
+            match result {
+                Ok((next_input, value)) => {
+                    let next = next_input.get_state();
+                    println!("Output:");
+                    println!("  Value:\t{:?}", value);
+                    println!("  Position:\t{}:{}", next.current_line, next.current_column);
+                    println!("  Indentation:\t{}", next.current_indent);
+                    let mut next_rest = next.text.get(next.current_pos..).unwrap_or("End of input");
+                    if next_rest.len() > 8 {
+                        next_rest = &next_rest[..8];
+                        println!("  Remaining:\t{:?}...", next_rest);
+                    } else {
+                        println!("  Remaining:\t{:?}", next_rest);
+                    }
+                    Ok((next_input, value))
+                }
+                Err(error) => {
+                    println!("Error:");
+                    println!("  Message:\t{}", error);
+                    Err(error)
+                }
+            }
+        })
+    }
 }
 
-pub fn integer<E: ParserError + Clone + 'static>(radix: u32) -> Parsec<LexIter, E, i64> {
+pub fn integer<E>(radix: u32) -> Parsec<LexIter, E, i64>
+where
+    E: ParserError<Context = str> + Clone + 'static,
+    Rc<<E as ParserError>::Context>: RcDefault,
+{
     token(
         digit(radix)
             .many1()
@@ -451,7 +546,11 @@ pub fn integer<E: ParserError + Clone + 'static>(radix: u32) -> Parsec<LexIter, 
     )
 }
 
-pub fn float<E: ParserError + Clone + 'static>() -> Parsec<LexIter, E, f64> {
+pub fn float<E>() -> Parsec<LexIter, E, f64>
+where
+    E: ParserError<Context = str> + Clone + 'static,
+    Rc<<E as ParserError>::Context>: RcDefault,
+{
     let integral = digit(10).many();
     let fractional = char('.') >> digit(10).many1();
     token(
@@ -472,7 +571,11 @@ pub fn float<E: ParserError + Clone + 'static>() -> Parsec<LexIter, E, f64> {
     )
 }
 
-pub fn number<E: ParserError + Clone + 'static>() -> Parsec<LexIter, E, f64> {
+pub fn number<E>() -> Parsec<LexIter, E, f64>
+where
+    E: ParserError<Context = str> + Clone + 'static,
+    Rc<<E as ParserError>::Context>: RcDefault,
+{
     let integral = digit(10).many();
     let fractional = || char('.') >> digit(10).many1();
     token(
@@ -497,7 +600,10 @@ pub fn number<E: ParserError + Clone + 'static>() -> Parsec<LexIter, E, f64> {
     )
 }
 
-pub fn symbol<E: ParserError + 'static>(expected: &str) -> Parsec<LexIter, E, String> {
+pub fn symbol<E>(expected: &str) -> Parsec<LexIter, E, String>
+where
+    E: ParserError<Context = str> + 'static,
+{
     let expected_ = expected.to_string();
     let expected_clone = expected_.clone();
     token(
