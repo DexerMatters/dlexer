@@ -276,8 +276,8 @@ pub struct LexIterState<T: ?Sized> {
     pub current_column: usize,
     pub current_pos: usize,
     pub current_indent: usize,
-    indent_flag: bool,
-    position: usize,
+    pub indent_flag: bool,
+    pub position: usize,
 }
 
 impl<T: ?Sized> Clone for LexIterState<T> {
@@ -455,7 +455,7 @@ where
     E: ParserError<Context = str> + 'static,
     A: 'static,
 {
-    pub fn test<'a>(&self, input: impl Into<String>) -> Result<A, E> {
+    pub fn test(&self, input: impl Into<String>) -> Result<A, E> {
         let input = LexIter::new(&input.into(), NoSkipper);
         self.run(input)
     }

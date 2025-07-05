@@ -38,19 +38,30 @@ impl Display for EOFError {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SimpleParserError {
+#[derive(Debug)]
+pub struct SimpleParserError<T: ?Sized> {
     expected: String,
     unexpected: String,
-    from: LexIterState<str>,
-    to: LexIterState<str>,
+    from: LexIterState<T>,
+    to: LexIterState<T>,
 }
 
-impl SimpleParserError {
+impl<T: ?Sized> Clone for SimpleParserError<T> {
+    fn clone(&self) -> Self {
+        Self {
+            expected: self.expected.clone(),
+            unexpected: self.unexpected.clone(),
+            from: LexIterState::clone(&self.from),
+            to: LexIterState::clone(&self.to),
+        }
+    }
+}
+
+impl<T: ?Sized> SimpleParserError<T> {
     pub fn new(
         expected: String,
         unexpected: String,
-        state: (LexIterState<str>, LexIterState<str>),
+        state: (LexIterState<T>, LexIterState<T>),
     ) -> Self {
         Self {
             expected,
@@ -61,8 +72,8 @@ impl SimpleParserError {
     }
 }
 
-impl ParserError for SimpleParserError {
-    type Context = str;
+impl<U: ?Sized> ParserError for SimpleParserError<U> {
+    type Context = U;
     fn unexpected<T>(
         state: (LexIterState<Self::Context>, LexIterState<Self::Context>),
         item: T,
@@ -97,7 +108,7 @@ impl ParserError for SimpleParserError {
     }
 }
 
-impl Display for SimpleParserError {
+impl<T: ?Sized> Display for SimpleParserError<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let from = format!("{}:{}", self.from.current_line, self.from.current_column);
         let to = format!("{}:{}", self.to.current_line, self.to.current_column);

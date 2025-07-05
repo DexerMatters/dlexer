@@ -13,7 +13,7 @@ use crate::{
 
 pub type BuildParser<S, E> = Parsec<S, E, <S as Iterator>::Item>;
 
-pub type BasicParser = Parsec<LexIter, SimpleParserError, <LexIter as LexIterTrait>::Item>;
+pub type BasicParser = Parsec<LexIter, SimpleParserError<str>, <LexIter as LexIterTrait>::Item>;
 
 #[derive(Clone)]
 pub struct Parsec<S: LexIterTrait, E: ParserError, A> {
@@ -187,6 +187,55 @@ where
             while let Ok((new_input, value)) = self.eval(current_input.clone()) {
                 results.push(value);
                 current_input = new_input;
+            }
+
+            Ok((current_input, results))
+        })
+    }
+
+    pub fn take<R>(self, range: R) -> Parsec<S, E, Vec<A>>
+    where
+        S: Clone,
+        R: std::ops::RangeBounds<usize> + Clone + 'static,
+    {
+        Parsec::new(move |input: S| {
+            let mut results = Vec::new();
+            let mut current_input = input;
+            let mut count = 0;
+
+            let start = match range.start_bound() {
+                std::ops::Bound::Included(&n) => n,
+                std::ops::Bound::Excluded(&n) => n + 1,
+                std::ops::Bound::Unbounded => 0,
+            };
+
+            let end = match range.end_bound() {
+                std::ops::Bound::Included(&n) => n + 1,
+                std::ops::Bound::Excluded(&n) => n,
+                std::ops::Bound::Unbounded => usize::MAX,
+            };
+
+            while count < end {
+                match self.eval(current_input.clone()) {
+                    Ok((new_input, value)) => {
+                        results.push(value);
+                        current_input = new_input;
+                        count += 1;
+                    }
+                    Err(err) => {
+                        if count < start {
+                            return Err(err);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if count < start {
+                return Err(E::eof((
+                    current_input.get_state(),
+                    current_input.get_state(),
+                )));
             }
 
             Ok((current_input, results))
@@ -386,6 +435,88 @@ where
                     }
                 }
             }
+        })
+    }
+
+    pub fn sep_take<T: 'static, R>(self, sep: Parsec<S, E, T>, range: R) -> Parsec<S, E, Vec<A>>
+    where
+        S: Clone,
+        R: std::ops::RangeBounds<usize> + Clone + 'static,
+    {
+        Parsec::new(move |input: S| {
+            let mut results = Vec::new();
+            let mut current_input = input;
+            let mut count = 0;
+
+            let start = match range.start_bound() {
+                std::ops::Bound::Included(&n) => n,
+                std::ops::Bound::Excluded(&n) => n + 1,
+                std::ops::Bound::Unbounded => 0,
+            };
+
+            let end = match range.end_bound() {
+                std::ops::Bound::Included(&n) => n + 1,
+                std::ops::Bound::Excluded(&n) => n,
+                std::ops::Bound::Unbounded => usize::MAX,
+            };
+
+            // Try to parse the first item
+            if count < end {
+                match self.eval(current_input.clone()) {
+                    Ok((new_input, first_value)) => {
+                        results.push(first_value);
+                        current_input = new_input;
+                        count += 1;
+                    }
+                    Err(err) => {
+                        // If we can't parse the first item and minimum is 0, return empty
+                        if start == 0 {
+                            return Ok((current_input, results));
+                        } else {
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+
+            // Parse additional items with separators
+            while count < end {
+                match sep.eval(current_input.clone()) {
+                    Ok((sep_input, _)) => {
+                        match self.eval(sep_input) {
+                            Ok((new_input, value)) => {
+                                results.push(value);
+                                current_input = new_input;
+                                count += 1;
+                            }
+                            Err(err) => {
+                                // If we can't parse the item after separator, check if we have enough
+                                if count < start {
+                                    return Err(err);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        // If we can't parse separator, check if we have enough items
+                        if count < start {
+                            return Err(err);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Final check for minimum count
+            if count < start {
+                return Err(E::eof((
+                    current_input.get_state(),
+                    current_input.get_state(),
+                )));
+            }
+
+            Ok((current_input, results))
         })
     }
 

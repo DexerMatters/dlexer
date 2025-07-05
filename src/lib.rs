@@ -1,7 +1,9 @@
+pub mod binary;
 pub mod errors;
 pub mod lex;
 pub mod parsec;
 pub mod prelude;
+pub mod stream;
 
 mod examples;
 
