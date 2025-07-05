@@ -3,7 +3,7 @@ use std::{io::Read, rc::Rc};
 use crate::lex::{LexIterState, LexIterTrait};
 
 pub struct StreamLexIter<I: LexIterTrait> {
-    state: LexIterState<(dyn Read)>,
+    state: LexIterState<dyn Read>,
     sub_iter: I,
 }
 

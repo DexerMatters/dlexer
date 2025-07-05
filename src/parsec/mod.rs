@@ -108,12 +108,9 @@ where
         self,
         left: Parsec<S, E, B>,
         right: Parsec<S, E, C>,
-    ) -> Parsec<S, E, A>
-    where
-        S: Clone,
-    {
+    ) -> Parsec<S, E, A> {
         Parsec::new(move |input: S| {
-            let (next_input, _) = left.eval(input.clone())?;
+            let (next_input, _) = left.eval(input)?;
             let (final_input, value) = self.eval(next_input)?;
             let (end_input, _) = right.eval(final_input)?;
             Ok((end_input, value))
@@ -580,23 +577,17 @@ where
         Parsec::new(move |input: S| parse_rec(&parser, &op, input, &init))
     }
 
-    pub fn pair<B: 'static>(self, other: Parsec<S, E, B>) -> Parsec<S, E, (A, B)>
-    where
-        S: Clone,
-    {
+    pub fn pair<B: 'static>(self, other: Parsec<S, E, B>) -> Parsec<S, E, (A, B)> {
         Parsec::new(move |input: S| {
-            let (next_input, value_a) = self.eval(input.clone())?;
+            let (next_input, value_a) = self.eval(input)?;
             let (final_input, value_b) = other.eval(next_input)?;
             Ok((final_input, (value_a, value_b)))
         })
     }
 
-    pub fn extend(self, other: Parsec<S, E, Vec<A>>) -> Parsec<S, E, Vec<A>>
-    where
-        S: Clone,
-    {
+    pub fn extend(self, other: Parsec<S, E, Vec<A>>) -> Parsec<S, E, Vec<A>> {
         Parsec::new(move |input: S| {
-            let (next_input, value) = self.eval(input.clone())?;
+            let (next_input, value) = self.eval(input)?;
             let (final_input, mut other_values) = other.eval(next_input)?;
             other_values.insert(0, value);
             Ok((final_input, other_values))
@@ -607,16 +598,16 @@ where
     where
         F: Fn(&A) -> bool + 'static,
         A: Display,
-        S: Clone,
         E: Clone + 'static,
     {
         Parsec::new(move |input: S| {
-            let (next_input, item) = self.eval(input.clone())?;
+            let original_state = input.get_state();
+            let (next_input, item) = self.eval(input)?;
             if f(&item) {
                 Ok((next_input, item))
             } else {
                 Err(E::unexpected(
-                    (input.get_state(), next_input.get_state()),
+                    (original_state, next_input.get_state()),
                     &item,
                 ))
             }
@@ -626,14 +617,14 @@ where
     pub fn not(self, value: A) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
-        S: Clone,
         E: Clone + 'static,
     {
         Parsec::new(move |input: S| {
-            let (next_input, item) = self.eval(input.clone())?;
+            let original_state = input.get_state();
+            let (next_input, item) = self.eval(input)?;
             if item == value {
                 Err(
-                    E::unexpected((input.get_state(), next_input.get_state()), &item)
+                    E::unexpected((original_state, next_input.get_state()), &item)
                         .with_expected(&value),
                 )
             } else {
@@ -645,16 +636,16 @@ where
     pub fn is(self, value: A) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
-        S: Clone,
         E: Clone + 'static,
     {
         Parsec::new(move |input: S| {
-            let (next_input, item) = self.eval(input.clone())?;
+            let original_state = input.get_state();
+            let (next_input, item) = self.eval(input)?;
             if item == value {
                 Ok((next_input, item))
             } else {
                 Err(
-                    E::unexpected((input.get_state(), next_input.get_state()), &item)
+                    E::unexpected((original_state, next_input.get_state()), &item)
                         .with_expected(&value),
                 )
             }
@@ -664,20 +655,19 @@ where
     pub fn one_of(self, values: impl Iterator<Item = A> + Clone + 'static) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
-        S: Clone,
         E: Clone + 'static,
     {
         Parsec::new(move |input: S| {
-            let (next_input, item) = self.eval(input.clone())?;
+            let original_state = input.get_state();
+            let (next_input, item) = self.eval(input)?;
             let mut values = values.clone();
             if values.any(|v| v == item) {
                 Ok((next_input, item))
             } else {
                 Err(
-                    E::unexpected((input.get_state(), next_input.get_state()), &item)
-                        .with_expected(
-                            &values.map(|v| v.to_string()).collect::<Vec<_>>().join(", "),
-                        ),
+                    E::unexpected((original_state, next_input.get_state()), &item).with_expected(
+                        &values.map(|v| v.to_string()).collect::<Vec<_>>().join(", "),
+                    ),
                 )
             }
         })
@@ -686,14 +676,14 @@ where
     pub fn none_of(self, values: impl Iterator<Item = A> + Clone + 'static) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
-        S: Clone,
         E: 'static,
     {
         Parsec::new(move |input: S| {
-            let (next_input, item) = self.eval(input.clone())?;
+            let original_state = input.get_state();
+            let (next_input, item) = self.eval(input)?;
             if values.clone().any(|v| v == item) {
                 Err(E::unexpected(
-                    (input.get_state(), next_input.get_state()),
+                    (original_state, next_input.get_state()),
                     &item,
                 ))
             } else {
@@ -712,7 +702,7 @@ where
 
 impl<S, E> Parsec<S, E, String>
 where
-    S: LexIterTrait + Clone + 'static,
+    S: LexIterTrait + 'static,
     E: ParserError<Context = S::Context> + 'static,
 {
     pub fn leak(self) -> Parsec<S, E, &'static str> {
@@ -734,7 +724,7 @@ where
 
 impl<S, E, A> Parsec<S, E, Parsec<S, E, A>>
 where
-    S: LexIterTrait + Clone + 'static,
+    S: LexIterTrait + 'static,
     E: ParserError<Context = S::Context> + 'static,
     A: 'static,
 {
@@ -748,7 +738,7 @@ where
 
 impl<S, E, A> Parsec<S, E, Vec<Parsec<S, E, A>>>
 where
-    S: LexIterTrait + Clone + 'static,
+    S: LexIterTrait + 'static,
     E: ParserError<Context = S::Context> + 'static,
     A: 'static,
 {
@@ -770,7 +760,7 @@ where
 
 impl<const N: usize, S, E, A> Parsec<S, E, [Parsec<S, E, A>; N]>
 where
-    S: LexIterTrait + Clone + 'static,
+    S: LexIterTrait + 'static,
     E: ParserError<Context = S::Context> + 'static,
     A: Debug + 'static,
 {
@@ -1071,7 +1061,7 @@ where
 
 impl<S, E, A, B> Add<Parsec<S, E, B>> for Parsec<S, E, A>
 where
-    S: LexIterTrait + Clone + 'static,
+    S: LexIterTrait + 'static,
     E: ParserError<Context = S::Context> + 'static,
     A: 'static,
     B: 'static,
@@ -1085,7 +1075,7 @@ where
 
 impl<S, E, A, B> Shr<Parsec<S, E, B>> for Parsec<S, E, A>
 where
-    S: LexIterTrait + Clone + 'static,
+    S: LexIterTrait + 'static,
     E: ParserError<Context = S::Context> + 'static,
     A: 'static,
     B: 'static,
@@ -1099,7 +1089,7 @@ where
 
 impl<S, E, A, B> Shl<Parsec<S, E, B>> for Parsec<S, E, A>
 where
-    S: LexIterTrait + Clone + 'static,
+    S: LexIterTrait + 'static,
     E: ParserError<Context = S::Context> + 'static,
     A: 'static,
     B: 'static,
@@ -1113,7 +1103,7 @@ where
 
 impl<S, F, E, A, B> BitAnd<F> for Parsec<S, E, A>
 where
-    S: LexIterTrait + Clone + 'static,
+    S: LexIterTrait + 'static,
     F: Fn(A) -> B + 'static,
     E: ParserError<Context = S::Context> + 'static,
     A: 'static,
