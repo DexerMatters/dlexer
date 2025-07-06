@@ -286,6 +286,20 @@ pub struct LexIterState<T: ?Sized> {
     pub position: usize,
 }
 
+impl<T: ?Sized> LexIterState<T> {
+    pub fn new(context: impl Into<Rc<T>>) -> Self {
+        LexIterState {
+            context: context.into(),
+            current_line: 1,
+            current_column: 0,
+            current_pos: 0,
+            current_indent: 0,
+            indent_flag: true,
+            position: 0,
+        }
+    }
+}
+
 impl<T: ?Sized> Clone for LexIterState<T> {
     fn clone(&self) -> Self {
         LexIterState {
@@ -317,7 +331,16 @@ where
     }
 }
 
+impl<T> LexIterState<[T]> {
+    pub fn context_len(&self) -> usize {
+        self.context.len()
+    }
+}
+
 impl LexIterState<str> {
+    pub fn context_len(&self) -> usize {
+        self.context.len()
+    }
     fn next_one_char(&mut self) -> Option<char> {
         if self.position >= self.context.len() {
             return None;

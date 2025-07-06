@@ -2,7 +2,7 @@ pub mod extra;
 
 use std::{
     fmt::{Debug, Display},
-    ops::{Add, BitAnd, BitOr, Range, RangeBounds, RangeInclusive, Shl, Shr},
+    ops::{Add, BitAnd, BitOr, Range, RangeBounds, RangeInclusive, RangeToInclusive, Shl, Shr},
     rc::Rc,
 };
 
@@ -29,6 +29,13 @@ impl Take<usize> for Range<usize> {
 
 impl Take<usize> for RangeInclusive<usize> {
     type Output = RangeInclusive<usize>;
+    fn as_range(self) -> Self::Output {
+        self
+    }
+}
+
+impl Take<usize> for RangeToInclusive<usize> {
+    type Output = RangeToInclusive<usize>;
     fn as_range(self) -> Self::Output {
         self
     }
@@ -1096,7 +1103,7 @@ where
     A: 'static,
     B: 'static,
 {
-    pub fn internalize<F, D: Display>(self, f: F) -> Parsec<S, E, A>
+    pub fn lift_err<F, D: Display>(self, f: F) -> Parsec<S, E, A>
     where
         F: Fn(B) -> D + 'static,
     {

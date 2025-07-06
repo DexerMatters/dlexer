@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::lex::LexIterState;
+use crate::lex::{LexIterState, Skipper};
 
 pub trait ParserError: Display {
     type Context: ?Sized;
@@ -26,6 +26,10 @@ pub trait ParserError: Display {
 
     fn to(&self) -> LexIterState<Self::Context> {
         self.from()
+    }
+
+    fn skipper(&self) -> Option<&dyn Skipper> {
+        None
     }
 }
 
