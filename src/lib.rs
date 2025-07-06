@@ -151,7 +151,9 @@ mod tests {
     #![allow(dead_code)]
 
     use crate::{
-        binary::{n_bytes, u32, BasicByteParser}, lex::{symbol, token, WhitespaceSkipper}, parsec::*
+        binary::{n_bytes, u32, BasicByteParser},
+        lex::{symbol, token, WhitespaceSkipper},
+        parsec::*,
     };
 
     type P = BasicParser;
@@ -240,7 +242,7 @@ mod tests {
 
     #[test]
     fn take_test() {
-        let p: With<P, _> = char('a').take(1 .. 2).collect::<String>();
+        let p: With<P, _> = char('a').take(1..2).collect::<String>();
         let input = "";
         match p.dbg().test(input) {
             Ok(a) => {
@@ -262,9 +264,7 @@ mod tests {
 
         let input = [0x00, 0x00, 0x00, 0x04, 0xAA, 0xBB, 0xCC, 0xDD]; // Represents "abcd" with length 4
         match p.parse(&input) {
-            Ok(a) => {
-                println!("Parsed successfully: {:?}", a);
-            }
+            Ok(a) => println!("Parsed successfully: {:?}", a),
             Err(e) => println!("{}", e),
         }
     }
