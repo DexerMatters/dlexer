@@ -2,7 +2,7 @@ pub mod binary;
 pub mod errors;
 pub mod lex;
 pub mod parsec;
-pub mod prelude;
+
 //mod stream;
 
 mod examples;
@@ -42,8 +42,8 @@ mod tests {
     #![allow(dead_code)]
 
     use crate::{
-        lex::{CharSkipper, LineSkipper, WhitespaceSkipper, symbol, token},
-        parsec::{extra::indent_block, *},
+        lex::{WhitespaceSkipper, symbol, token},
+        parsec::*,
     };
 
     type P = BasicParser;
@@ -88,32 +88,6 @@ mod tests {
                 println!("Parsed successfully: {:?}", a);
             }
             Err(e) => println!("{}", e),
-        }
-    }
-
-    #[test]
-    fn block_test() {
-        #[derive(Debug, Clone)]
-        enum Expr {
-            Identifier(String),
-            Block(String, Vec<Expr>),
-        }
-        fn ident() -> With<P, Expr> {
-            alpha().many().collect().map(Expr::Identifier)
-        }
-        fn block() -> With<P, Expr> {
-            (alpha().many().collect() + indent_block(rec(parse)))
-                .map(|(name, body)| Expr::Block(name, body))
-        }
-
-        fn parse() -> With<P, Expr> {
-            block() | ident()
-        }
-
-        let path = "/home/dexer/Repos/rust/dlexer/tests/test.txt";
-        match parse().parse_file(path, [LineSkipper("//").into(), CharSkipper([' ']).into()]) {
-            Ok(a) => println!("Parsed block: {:?}", a),
-            Err(e) => println!("Error parsing block: {}", e),
         }
     }
 

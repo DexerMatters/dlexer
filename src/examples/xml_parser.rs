@@ -4,8 +4,7 @@ use crate::{
     do_parse,
     lex::{number, symbol, token},
     map,
-    parsec::{BasicParser, With, any, char, pure},
-    prelude::build_ident,
+    parsec::{BasicParser, With, any, char, extra::build_ident, pure},
 };
 
 #[derive(Debug, Clone)]

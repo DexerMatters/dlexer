@@ -106,7 +106,7 @@ where
 {
     n_bytes(2)
         .map(|bytes| bytes.try_into().map(u16::from_be_bytes))
-        .lift_err(|err| format!("Failed to parse u16 from bytes: {:?}", err))
+        .lift_err(|err| format!("invalid u16 bytes: {:?}", err))
 }
 
 pub fn u32<S, E>() -> Parsec<S, E, u32>
@@ -116,7 +116,7 @@ where
 {
     n_bytes(4)
         .map(|bytes| bytes.try_into().map(u32::from_be_bytes))
-        .lift_err(|err| format!("Failed to parse u32 from bytes: {:?}", err))
+        .lift_err(|err| format!("invalid u32 bytes: {:?}", err))
 }
 
 pub fn u64<S, E>() -> Parsec<S, E, u64>
@@ -126,7 +126,7 @@ where
 {
     n_bytes(8)
         .map(|bytes| bytes.try_into().map(u64::from_be_bytes))
-        .lift_err(|err| format!("Failed to parse u64 from bytes: {:?}", err))
+        .lift_err(|err| format!("invalid u64 bytes: {:?}", err))
 }
 
 pub fn u128<S, E>() -> Parsec<S, E, u128>
@@ -136,7 +136,7 @@ where
 {
     n_bytes(16)
         .map(|bytes| bytes.try_into().map(u128::from_be_bytes))
-        .lift_err(|err| format!("Failed to parse u128 from bytes: {:?}", err))
+        .lift_err(|err| format!("invalid u128 bytes: {:?}", err))
 }
 pub fn i8<S, E>() -> Parsec<S, E, i8>
 where
@@ -153,7 +153,7 @@ where
 {
     n_bytes(2)
         .map(|bytes| bytes.try_into().map(i16::from_le_bytes))
-        .lift_err(|err| format!("Failed to parse i16 from bytes: {:?}", err))
+        .lift_err(|err| format!("invalid i16 bytes: {:?}", err))
 }
 
 pub fn i32<S, E>() -> Parsec<S, E, i32>
@@ -163,7 +163,7 @@ where
 {
     n_bytes(4)
         .map(|bytes| bytes.try_into().map(i32::from_le_bytes))
-        .lift_err(|err| format!("Failed to parse i32 from bytes: {:?}", err))
+        .lift_err(|err| format!("invalid i32 bytes: {:?}", err))
 }
 
 pub fn i64<S, E>() -> Parsec<S, E, i64>
@@ -173,7 +173,7 @@ where
 {
     n_bytes(8)
         .map(|bytes| bytes.try_into().map(i64::from_le_bytes))
-        .lift_err(|err| format!("Failed to parse i64 from bytes: {:?}", err))
+        .lift_err(|err| format!("invalid i64 bytes: {:?}", err))
 }
 
 pub fn i128<S, E>() -> Parsec<S, E, i128>
@@ -183,7 +183,7 @@ where
 {
     n_bytes(16)
         .map(|bytes| bytes.try_into().map(i128::from_le_bytes))
-        .lift_err(|err| format!("Failed to parse i128 from bytes: {:?}", err))
+        .lift_err(|err| format!("invalid i128 bytes: {:?}", err))
 }
 
 pub fn f32<S, E>() -> Parsec<S, E, f32>
@@ -213,7 +213,7 @@ where
         .map(move |bytes| {
             let (head, body, _tail) = unsafe { bytes.align_to::<T>() };
             if head.is_empty() {
-                return Err("Failed to align bytes");
+                return Err("bad alignment");
             }
             Ok(body.first().unwrap() as *const T)
         })

@@ -14,6 +14,7 @@ where
         .expected("identifier")
 }
 
+#[cfg(feature = "experimental")]
 pub fn indent_block<S, E, A>(parser: Parsec<S, E, A>) -> Parsec<S, E, Vec<A>>
 where
     S: LexIterTrait<Item = char> + Clone + 'static,

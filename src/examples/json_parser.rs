@@ -3,8 +3,7 @@
 use crate::{
     lex::{number, symbol, token},
     map,
-    parsec::{BasicParser, With, any, char, rec},
-    prelude::build_ident,
+    parsec::{BasicParser, With, any, char, extra::build_ident, rec},
 };
 
 #[derive(Debug, Clone, PartialEq)]
