@@ -1,13 +1,59 @@
+//! Lexer utilities for tokenization and input stream handling.
+//!
+//! This module provides tools for lexical analysis, primarily focused on handling
+//! whitespace, comments, and defining token-level parsers. It integrates with the
+//! `parsec` module to create robust parsers that can ignore irrelevant input.
+//!
+//! # Key Components
+//!
+//! - **`Skipper` Trait**: Defines how to skip parts of the input. Implementations
+//!   are provided for common cases like whitespace (`WhitespaceSkipper`), line
+//!   comments (`LineSkipper`), and block comments (`BlockSkipper`).
+//!
+//! - **`LexIter`**: A stateful iterator over string input that tracks position
+//!   (line, column) and uses a `Skipper` to ignore characters.
+//!
+//! - **`token` function**: A higher-order parser that wraps another parser to
+//!   handle skipping before and after the token is parsed. This is crucial for
+//!   building parsers for languages with free-form whitespace.
+//!
+//! # Basic Usage
+//!
+//! The main way to use this module is by creating a `Skipper` and passing it to
+//! the `parse` method, or by using token parsers like `symbol`, `integer`, etc.,
+//! which use `token` internally.
+//!
+//! ```
+//! use dlexer::lex::{symbol, WhitespaceSkipper};
+//! use dlexer::parsec::*;
+//!
+//! // A parser for the keyword "let", automatically skipping whitespace.
+//! let let_keyword = symbol("let");
+//!
+//! // The `symbol` parser uses `token`, which uses a skipper.
+//! // We can provide a skipper to the `parse` method.
+//! let result = let_keyword.parse("  let  ", WhitespaceSkipper);
+//!
+//! assert_eq!(result.unwrap(), "let");
+//! ```
 use std::fmt::Debug;
 use std::rc::Rc;
 use std::str::Chars;
 
 use crate::errors::ParserError;
-use crate::parsec::{Parsec, char, digit, fail, pure};
+use crate::parsec::{char, digit, fail, pure, Parsec};
 
+/// A trait for defining how to skip over parts of the input stream.
+///
+/// Skippers are used to ignore characters like whitespace or comments during parsing,
+/// allowing parsers to focus on meaningful tokens.
 pub trait Skipper {
+    /// Returns the next character from the input after skipping.
     fn next(&self, state: &mut LexIterState<str>) -> Option<char>;
 
+    /// Skips characters from the current position in the input.
+    ///
+    /// Returns the number of characters skipped.
     fn skip(&self, state: &mut LexIterState<str>) -> usize {
         let original = state.current_pos;
         if let Some(c) = self.next(state) {
@@ -24,10 +70,15 @@ pub trait Skipper {
         state.current_pos.saturating_sub(original)
     }
 
+    /// Clones the skipper into a `Box<dyn Skipper>`.
     fn clone_box(&self) -> Box<dyn Skipper>;
 }
 
+/// A trait for converting a type into a boxed `Skipper`.
+///
+/// This allows for flexible composition of different skipper types.
 pub trait AsSkipper {
+    /// Converts `self` into a `Box<dyn Skipper>`.
     fn as_skipper(self) -> Box<dyn Skipper>;
 }
 
@@ -59,6 +110,9 @@ impl<T: Skipper + 'static> From<T> for Box<dyn Skipper> {
     }
 }
 
+/// A skipper that does nothing.
+///
+/// This is the default skipper, which does not skip any characters.
 #[derive(Clone)]
 pub struct NoSkipper;
 
@@ -75,6 +129,7 @@ impl Skipper for NoSkipper {
     }
 }
 
+/// A skipper that skips whitespace characters, excluding newlines.
 #[derive(Clone)]
 pub struct WhitespaceSkipper;
 
@@ -101,6 +156,17 @@ impl Skipper for WhitespaceSkipper {
     }
 }
 
+/// A skipper that skips a specific set of characters.
+///
+/// # Example
+///
+/// ```
+/// use dlexer::lex::{CharSkipper, LexIter, LexIterTrait};
+///
+/// let skipper = CharSkipper([' ', '\t']);
+/// let mut iter = LexIter::new("  \t  hello", skipper);
+/// assert_eq!(iter.next(), Some('h'));
+/// ```
 #[derive(Clone)]
 pub struct CharSkipper<const N: usize>(pub [char; N]);
 
@@ -127,6 +193,19 @@ impl<const N: usize> Skipper for CharSkipper<N> {
     }
 }
 
+/// A skipper that skips line comments.
+///
+/// It skips from a given line comment marker to the end of the line.
+///
+/// # Example
+///
+/// ```
+/// use dlexer::lex::{LexIter, LexIterTrait, LineSkipper};
+///
+/// let skipper = LineSkipper("//");
+/// let mut iter = LexIter::new("// comment\nhello", skipper);
+/// assert_eq!(iter.next(), Some('\n')); // The newline is not consumed
+/// ```
 #[derive(Clone)]
 pub struct LineSkipper(pub &'static str);
 
@@ -161,6 +240,19 @@ impl Skipper for LineSkipper {
     }
 }
 
+/// A skipper that skips nested blocks of comments.
+///
+/// It skips from a given start delimiter to an end delimiter, handling nested blocks correctly.
+///
+/// # Example
+///
+/// ```
+/// use dlexer::lex::{BlockSkipper, LexIter, LexIterTrait};
+///
+/// let skipper = BlockSkipper("/*", "*/");
+/// let mut iter = LexIter::new("/* comment /* nested */ */hello", skipper);
+/// assert_eq!(iter.next(), Some('h'));
+/// ```
 #[derive(Clone)]
 pub struct BlockSkipper(pub &'static str, pub &'static str);
 
@@ -208,6 +300,10 @@ impl Skipper for BlockSkipper {
     }
 }
 
+/// A collection of skippers that are applied in sequence.
+///
+/// The `Skippers` struct allows combining multiple skipper behaviors. It repeatedly
+/// applies each skipper in its collection until no more characters can be skipped.
 pub struct Skippers {
     pub skippers: Vec<Box<dyn Skipper>>,
 }
@@ -243,20 +339,33 @@ impl Skipper for Skippers {
     }
 }
 
+/// A trait for types that contain a `Skipper`.
 pub trait HasSkipper {
+    /// Returns a reference to the skipper.
     fn get_skipper(&self) -> &dyn Skipper;
+    /// Sets the skipper.
     fn set_skipper(&mut self, skipper: Box<dyn Skipper>);
 }
 
+/// A trait for lexer iterators.
+///
+/// This defines the core interface for stateful iterators used by the parser combinators.
 pub trait LexIterTrait {
+    /// The type of the context being parsed (e.g., `str` or `[u8]`).
     type Context: ?Sized;
+    /// The type of item produced by the iterator.
     type Item;
+    /// Returns a clone of the current iterator state.
     fn get_state(&self) -> LexIterState<Self::Context>;
+    /// Returns a mutable reference to the iterator state.
     fn get_state_mut(&mut self) -> &mut LexIterState<Self::Context>;
+    /// Advances the iterator and returns the next item.
     fn next(&mut self) -> Option<Self::Item>;
 }
 
+/// A helper trait for creating default `Rc` values.
 pub trait RcDefault {
+    /// Creates a default `Rc` value.
     fn default() -> Self;
 }
 
@@ -275,14 +384,22 @@ where
     }
 }
 
+/// Represents the state of a `LexIter`.
 #[derive(Debug)]
 pub struct LexIterState<T: ?Sized> {
+    /// A reference-counted pointer to the input context (e.g., the string being parsed).
     pub context: Rc<T>,
+    /// The current line number (1-based).
     pub current_line: usize,
+    /// The current column number (0-based).
     pub current_column: usize,
+    /// The current character position (0-based).
     pub current_pos: usize,
+    /// The current indentation level.
     pub current_indent: usize,
+    /// A flag indicating if the iterator is at the start of a line, used for indentation tracking.
     pub indent_flag: bool,
+    /// The byte position in the context string.
     pub position: usize,
 }
 
@@ -407,6 +524,10 @@ impl LexIterState<str> {
     }
 }
 
+/// A lexer iterator over a string slice.
+///
+/// `LexIter` is the default iterator for parsing text. It tracks position,
+/// handles indentation, and uses a `Skipper` to ignore irrelevant characters.
 pub struct LexIter {
     pub(crate) skipper: Box<dyn Skipper>,
     pub(crate) state: LexIterState<str>,
@@ -422,6 +543,7 @@ impl Clone for LexIter {
 }
 
 impl LexIter {
+    /// Creates a new `LexIter` with a given context and skipper.
     pub fn new<'a>(context: &'a str, skipper: impl Into<Box<dyn Skipper>>) -> Self {
         LexIter {
             skipper: skipper.into(),
@@ -476,6 +598,24 @@ impl From<String> for LexIter {
     }
 }
 
+/// A parser combinator that treats a parser as a "token" parser.
+///
+/// It applies the configured skipper before and after running the given parser,
+/// but ensures that no skipping occurs *within* the parser itself. This is
+/// essential for parsing atomic tokens like identifiers or numbers where internal
+/// whitespace is not allowed.
+///
+/// # Example
+///
+/// ```
+/// use dlexer::lex::{symbol, token, WhitespaceSkipper};
+/// use dlexer::parsec::*;
+///
+/// let parser = token(char('a') >> char('b'));
+/// assert_eq!(parser.parse("ab", WhitespaceSkipper).unwrap(), 'b');
+/// assert!(parser.parse("a b", WhitespaceSkipper).is_err());
+/// 
+/// ```
 pub fn token<S, E, A>(p: Parsec<S, E, A>) -> Parsec<S, E, A>
 where
     S: LexIterTrait<Context = str> + HasSkipper + 'static,
@@ -500,14 +640,19 @@ where
     E: ParserError<Context = str> + 'static,
     A: 'static,
 {
+    /// Runs the parser on a string with no skipping.
+    ///
+    /// This is a convenience method for testing parsers on simple inputs.
     pub fn test(&self, input: impl Into<String>) -> Result<A, E> {
         let input = LexIter::new(&input.into(), NoSkipper);
         self.run(input)
     }
+    /// Runs the parser on a string with a specified skipper.
     pub fn parse<'a>(&self, input: impl Into<&'a str>, skipper: impl AsSkipper) -> Result<A, E> {
         let input = LexIter::new(input.into(), skipper.as_skipper());
         self.run(input)
     }
+    /// Reads a file into a string and runs the parser on its contents.
     pub fn parse_file<P: AsRef<std::path::Path>>(
         &self,
         path: P,
@@ -519,6 +664,9 @@ where
         self.run(input)
     }
 
+    /// A utility for debugging a parser.
+    ///
+    /// Wraps a parser to print its input, output, and state at each step.
     pub fn dbg(self) -> Parsec<LexIter, E, A>
     where
         A: Debug,
@@ -571,6 +719,20 @@ where
     }
 }
 
+/// Parses an integer from the input.
+///
+/// The parser is configured with a radix and handles token-level skipping.
+///
+/// # Example
+///
+/// ```
+/// use dlexer::lex::{integer, WhitespaceSkipper};
+/// use dlexer::parsec::*;
+///
+/// let hex_parser = integer(16);
+/// let result = hex_parser.parse("  FF  ", WhitespaceSkipper);
+/// assert_eq!(result.unwrap(), 255);
+/// ```
 pub fn integer<S, E>(radix: u32) -> Parsec<S, E, i64>
 where
     S: LexIterTrait<Context = str, Item = char> + Clone + HasSkipper + 'static,
@@ -595,6 +757,20 @@ where
     )
 }
 
+/// Parses a floating-point number.
+///
+/// This parser expects a number with a decimal point (e.g., "123.45").
+///
+/// # Example
+///
+/// ```
+/// use dlexer::lex::{float, WhitespaceSkipper};
+/// use dlexer::parsec::*;
+///
+/// let parser = float();
+/// let result = parser.parse("  3.14  ", WhitespaceSkipper);
+/// assert_eq!(result.unwrap(), 3.14);
+/// ```
 pub fn float<S, E>() -> Parsec<S, E, f64>
 where
     S: LexIterTrait<Context = str, Item = char> + Clone + HasSkipper + 'static,
@@ -621,6 +797,18 @@ where
     )
 }
 
+/// Parses a number, which can be an integer or a float.
+///
+/// # Example
+///
+/// ```
+/// use dlexer::lex::{number, WhitespaceSkipper};
+/// use dlexer::parsec::*;
+///
+/// let parser = number();
+/// assert_eq!(parser.parse("123", WhitespaceSkipper).unwrap(), 123.0);
+/// assert_eq!(parser.parse("123.45", WhitespaceSkipper).unwrap(), 123.45);
+/// ```
 pub fn number<S, E>() -> Parsec<S, E, f64>
 where
     S: LexIterTrait<Context = str, Item = char> + Clone + HasSkipper + 'static,
@@ -651,6 +839,21 @@ where
     )
 }
 
+/// Parses a specific string symbol.
+///
+/// This is useful for parsing keywords or operators. It is wrapped with `token`
+/// to handle surrounding whitespace automatically.
+///
+/// # Example
+///
+/// ```
+/// use dlexer::lex::{symbol, WhitespaceSkipper};
+/// use dlexer::parsec::*;
+///
+/// let parser = symbol("if");
+/// let result = parser.parse("  if  ", WhitespaceSkipper);
+/// assert_eq!(result.unwrap(), "if");
+/// ```
 pub fn symbol<S, E>(expected: &str) -> Parsec<S, E, String>
 where
     S: LexIterTrait<Context = str, Item = char> + Clone + HasSkipper + 'static,

@@ -1,3 +1,32 @@
+//! Parser combinator library for building composable parsers.
+//!
+//! This module provides a functional approach to parsing using combinators.
+//! Combinators can be composed together to build complex parsers from simple
+//! building blocks.
+//!
+//! The core type is [`Parsec`], which represents a parser that:
+//! - Consumes input of type `S` (which implements [`LexIterTrait`])
+//! - May produce errors of type `E` (which implements [`ParserError`])
+//! - On success, produces values of type `A`
+//!
+//! # Basic Usage
+//!
+//! ```
+//! use dlexer::parsec::*;
+//!
+//! // Parse a single character
+//! let parser = char('a');
+//!
+//! // Combine parsers
+//! let combined = char('a').then(char('b'));
+//!
+//! // Use operator syntax
+//! let using_operators = char('a') >> char('b');
+//!
+//! // Transform results
+//! let mapped = char('a').map(|c| c.to_uppercase().next().unwrap());
+//! ```
+
 pub mod extra;
 
 use std::{
@@ -13,10 +42,17 @@ use crate::{
 
 pub type BuildParser<S, E> = Parsec<S, E, <S as Iterator>::Item>;
 
+/// A basic parser type alias using the default lexer iterator and error types.
 pub type BasicParser = Parsec<LexIter, SimpleParserError<str>, <LexIter as LexIterTrait>::Item>;
 
+/// Trait for types that can be converted to ranges for use with parser combinators.
+///
+/// This enables methods like `take` to accept different kinds of range specifications.
 pub trait Take<T> {
+    /// The range type this converts to.
     type Output: RangeBounds<T>;
+    
+    /// Converts this type into a range bounds.
     fn as_range(self) -> Self::Output;
 }
 
@@ -48,6 +84,12 @@ impl Take<usize> for usize {
     }
 }
 
+/// A parser combinator that consumes input and produces results.
+///
+/// `Parsec<S, E, A>` represents a parser that:
+/// - Consumes input of type `S` (which implements [`LexIterTrait`])
+/// - May produce errors of type `E` (which implements [`ParserError`])
+/// - Produces values of type `A` on success
 #[derive(Clone)]
 pub struct Parsec<S: LexIterTrait, E: ParserError, A> {
     run: Rc<dyn Fn(S) -> Result<(S, A), E>>,
@@ -59,18 +101,39 @@ where
     E: ParserError<Context = S::Context> + 'static,
     A: 'static,
 {
+    /// Creates a new parser from a function.
+    ///
+    /// The function should take input state and return either:
+    /// - `Ok((remaining_input, value))` on success
+    /// - `Err(error)` on failure
     pub fn new(run: impl Fn(S) -> Result<(S, A), E> + 'static) -> Self {
         Parsec { run: Rc::new(run) }
     }
 
+    /// Evaluates the parser on the given input.
+    ///
+    /// Returns both the remaining input and the parsed value on success.
     pub fn eval(&self, input: S) -> Result<(S, A), E> {
         (self.run)(input)
     }
 
+    /// Runs the parser on the given input, returning only the parsed value.
     pub fn run(&self, input: S) -> Result<A, E> {
         (self.run)(input).map(|(_, value)| value)
     }
 
+    /// Transforms the parsed value using the given function.
+    ///
+    /// This is the functor operation for parsers.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let parser = decimal_digit().map(|c| c.to_digit(10).unwrap());
+    /// assert_eq!(parser.test("7").unwrap(), 7);
+    /// ```
     pub fn map<B: 'static, F>(self, f: F) -> Parsec<S, E, B>
     where
         F: Fn(A) -> B + 'static,
@@ -81,6 +144,9 @@ where
         })
     }
 
+    /// Sets the expected description for error reporting.
+    ///
+    /// When this parser fails, the error will include the provided expectation.
     pub fn expected<T>(self, expected: T) -> Parsec<S, E, A>
     where
         T: Display + Clone + 'static,
@@ -101,6 +167,22 @@ where
         })
     }
 
+    /// Chains this parser with another parser-producing function.
+    ///
+    /// This is the monadic bind operation for parsers.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// // Parse a digit, then parse that many 'x' characters.
+    /// let parser = decimal_digit()
+    ///     .map(|c| c.to_digit(10).unwrap() as usize)
+    ///     .bind(|n| char('x').take(n));
+    ///
+    /// assert_eq!(parser.test("3xxx").unwrap().len(), 3);
+    /// ```
     pub fn bind<B: 'static, F>(self, f: F) -> Parsec<S, E, B>
     where
         F: Fn(A) -> Parsec<S, E, B> + 'static,
@@ -111,6 +193,9 @@ where
         })
     }
 
+    /// Applies a function parser to an argument parser.
+    ///
+    /// This is the applicative apply operation.
     pub fn apply<B: 'static, R: 'static>(self, arg: Parsec<S, E, B>) -> Parsec<S, E, R>
     where
         A: FnOnce(B) -> R + 'static,
@@ -122,6 +207,18 @@ where
         })
     }
 
+    /// Sequences this parser with another, keeping only the second result.
+    ///
+    /// Runs this parser followed by the other parser, returning the result of the other parser.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let parser = char('a').then(char('b')); // equivalent to char('a') >> char('b')
+    /// assert_eq!(parser.test("ab").unwrap(), 'b');
+    /// ```
     pub fn then<B: 'static>(self, other: Parsec<S, E, B>) -> Parsec<S, E, B> {
         Parsec::new(move |input| {
             let (next_input, _) = self.eval(input)?;
@@ -129,6 +226,18 @@ where
         })
     }
 
+    /// Sequences this parser with another, keeping only the first result.
+    ///
+    /// Runs this parser followed by the other parser, returning the result of this parser.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let parser = char('a').with(char('b')); // equivalent to char('a') << char('b')
+    /// assert_eq!(parser.test("ab").unwrap(), 'a');
+    /// ```
     pub fn with<B: 'static>(self, other: Parsec<S, E, B>) -> Parsec<S, E, A> {
         Parsec::new(move |input| {
             let (next_input, value) = self.eval(input)?;
@@ -137,6 +246,19 @@ where
         })
     }
 
+    /// Parses this parser between two other parsers.
+    ///
+    /// Equivalent to `left.then(self).with(right)`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let content = alpha().many1().collect::<String>();
+    /// let parser = content.between(char('('), char(')'));
+    /// assert_eq!(parser.test("(hello)").unwrap(), "hello");
+    /// ```
     pub fn between<B: 'static, C: 'static>(
         self,
         left: Parsec<S, E, B>,
@@ -150,6 +272,20 @@ where
         })
     }
 
+    /// Tries this parser, falling back to another on failure.
+    ///
+    /// If this parser fails, tries the other parser on the original input.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let parser = char('a').or(char('b')); // equivalent to char('a') | char('b')
+    /// assert_eq!(parser.test("a").unwrap(), 'a');
+    /// assert_eq!(parser.test("b").unwrap(), 'b');
+    /// assert!(parser.test("c").is_err());
+    /// ```
     pub fn or(self, other: Parsec<S, E, A>) -> Parsec<S, E, A>
     where
         S: Clone,
@@ -163,6 +299,19 @@ where
         })
     }
 
+    /// Makes this parser optional, returning `None` on failure.
+    ///
+    /// If the parser succeeds, returns `Some(value)`, otherwise returns `None`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let parser = char('a').opt();
+    /// assert_eq!(parser.test("a").unwrap(), Some('a'));
+    /// assert_eq!(parser.test("b").unwrap(), None);
+    /// ```
     pub fn opt(self) -> Parsec<S, E, Option<A>>
     where
         S: Clone,
@@ -173,6 +322,9 @@ where
         })
     }
 
+    /// Wraps the result in a single-element vector.
+    ///
+    /// Useful as a building block for parsers that return vectors.
     pub fn one(self) -> Parsec<S, E, Vec<A>> {
         Parsec::new(move |input: S| {
             let (next_input, value) = self.eval(input)?;
@@ -180,6 +332,9 @@ where
         })
     }
 
+    /// Converts parse errors into `Result` values.
+    ///
+    /// Instead of failing, returns `Err(error)` in the success value.
     pub fn try_(self) -> Parsec<S, E, Result<A, E>>
     where
         S: Clone,
@@ -190,6 +345,19 @@ where
         })
     }
 
+    /// Applies this parser zero or more times.
+    ///
+    /// Collects all successful parses into a vector.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let parser = char('a').many();
+    /// assert_eq!(parser.test("aaab").unwrap(), vec!['a', 'a', 'a']);
+    /// assert_eq!(parser.test("b").unwrap(), vec![]);
+    /// ```
     pub fn many(self) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -205,6 +373,19 @@ where
         })
     }
 
+    /// Applies this parser one or more times.
+    ///
+    /// Must succeed at least once, then collects all successful parses into a vector.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let parser = char('a').many1();
+    /// assert_eq!(parser.test("aaab").unwrap(), vec!['a', 'a', 'a']);
+    /// assert!(parser.test("b").is_err());
+    /// ```
     pub fn many1(self) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -223,6 +404,20 @@ where
         })
     }
 
+    /// Applies this parser a specific number of times based on a range.
+    ///
+    /// The range specifies minimum and maximum number of repetitions.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let parser = char('a').take(2..=3).collect::<String>();
+    /// assert_eq!(parser.test("aa").unwrap(), "aa");
+    /// assert_eq!(parser.test("aaa").unwrap(), "aaa");
+    /// assert!(parser.test("a").is_err());
+    /// ```
     pub fn take<R>(self, range: R) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -273,6 +468,19 @@ where
         })
     }
 
+    /// Applies this parser repeatedly until another parser succeeds.
+    ///
+    /// Collects the results into a vector, not including the end parser's result.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let parser = any().many_till(char(';')).collect::<String>();
+    /// let result = parser.test("hello;world").unwrap();
+    /// assert_eq!(result, "hello");
+    /// ```
     pub fn many_till<B: 'static>(self, end: Parsec<S, E, B>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -302,6 +510,9 @@ where
         })
     }
 
+    /// Applies this parser one or more times until another parser succeeds.
+    ///
+    /// Must succeed at least once, then continues until the end parser succeeds.
     pub fn many1_till<B: 'static>(self, end: Parsec<S, E, B>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -326,6 +537,19 @@ where
         })
     }
 
+    /// Parses zero or more occurrences of this parser separated by another parser.
+    ///
+    /// Returns the results of this parser in a vector, discarding the separator results.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let parser = decimal_digit().sep(char(','));
+    /// assert_eq!(parser.test("1,2,3").unwrap(), vec!['1', '2', '3']);
+    /// assert_eq!(parser.test("").unwrap(), vec![]);
+    /// ```
     pub fn sep<T: 'static>(self, sep: Parsec<S, E, T>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -352,6 +576,20 @@ where
             Ok((current_input, results))
         })
     }
+
+    /// Parses one or more occurrences of this parser separated by another parser.
+    ///
+    /// Must succeed at least once, then parses separator-item pairs as long as possible.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dlexer::parsec::*;
+    ///
+    /// let parser = decimal_digit().sep1(char(','));
+    /// assert_eq!(parser.test("1,2,3").unwrap(), vec!['1', '2', '3']);
+    /// assert!(parser.test("").is_err());
+    /// ```
     pub fn sep1(self, sep: Parsec<S, E, S::Item>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -372,6 +610,9 @@ where
         })
     }
 
+    /// Parses separated values until an end condition is met.
+    ///
+    /// Stops when the end parser succeeds, returning all parsed values.
     pub fn sep_till<T: 'static, U: 'static>(
         self,
         sep: Parsec<S, E, T>,
@@ -384,12 +625,10 @@ where
             let mut results = Vec::new();
             let mut current_input = input;
 
-            // Check if the end condition is met immediately
             if end.eval(current_input.clone()).is_ok() {
                 return Ok((current_input, results));
             }
 
-            // Parse the first item if possible
             match self.eval(current_input.clone()) {
                 Ok((new_input, value)) => {
                     results.push(value);
@@ -399,12 +638,10 @@ where
             }
 
             loop {
-                // Check if the end condition is met
                 if end.eval(current_input.clone()).is_ok() {
                     return Ok((current_input, results));
                 }
 
-                // Try to parse separator followed by an item
                 match sep.eval(current_input.clone()) {
                     Ok((sep_input, _)) => match self.eval(sep_input) {
                         Ok((new_input, value)) => {
@@ -414,11 +651,9 @@ where
                         Err(err) => return Err(err),
                     },
                     Err(err) => {
-                        // If we can't parse a separator, check if end condition is met
                         if end.eval(current_input.clone()).is_ok() {
                             return Ok((current_input, results));
                         } else {
-                            // Neither separator nor end condition could be parsed
                             return Err(err);
                         }
                     }
@@ -427,6 +662,9 @@ where
         })
     }
 
+    /// Parses one or more separated values until an end condition is met.
+    ///
+    /// Must succeed at least once, then parses separator-item pairs until the end condition.
     pub fn sep1_till<T: 'static, U: 'static>(
         self,
         sep: Parsec<S, E, T>,
@@ -436,17 +674,13 @@ where
         S: Clone,
     {
         Parsec::new(move |input: S| {
-            // Must parse at least one item
             let (mut current_input, first_value) = self.eval(input)?;
             let mut results = vec![first_value];
 
             loop {
-                // Check if the end condition is met
                 if end.eval(current_input.clone()).is_ok() {
                     return Ok((current_input, results));
                 }
-
-                // Try to parse separator followed by an item
                 match sep.eval(current_input.clone()) {
                     Ok((sep_input, _)) => match self.eval(sep_input) {
                         Ok((new_input, value)) => {
@@ -456,11 +690,9 @@ where
                         Err(err) => return Err(err),
                     },
                     Err(err) => {
-                        // If we can't parse a separator, check if end condition is met
                         if end.eval(current_input.clone()).is_ok() {
                             return Ok((current_input, results));
                         } else {
-                            // Neither separator nor end condition could be parsed
                             return Err(err);
                         }
                     }
@@ -469,6 +701,9 @@ where
         })
     }
 
+    /// Parses a specific number of separated values.
+    ///
+    /// The range specifies minimum and maximum number of items to parse.
     pub fn sep_take<T: 'static, R>(
         self,
         sep: Parsec<S, E, T>,
@@ -495,7 +730,6 @@ where
                 std::ops::Bound::Unbounded => usize::MAX,
             };
 
-            // Try to parse the first item
             if count < end {
                 match self.eval(current_input.clone()) {
                     Ok((new_input, first_value)) => {
@@ -504,7 +738,6 @@ where
                         count += 1;
                     }
                     Err(err) => {
-                        // If we can't parse the first item and minimum is 0, return empty
                         if start == 0 {
                             return Ok((current_input, results));
                         } else {
@@ -514,7 +747,6 @@ where
                 }
             }
 
-            // Parse additional items with separators
             while count < end {
                 match sep.eval(current_input.clone()) {
                     Ok((sep_input, _)) => {
@@ -525,7 +757,6 @@ where
                                 count += 1;
                             }
                             Err(err) => {
-                                // If we can't parse the item after separator, check if we have enough
                                 if count < start {
                                     return Err(err);
                                 }
@@ -534,7 +765,6 @@ where
                         }
                     }
                     Err(err) => {
-                        // If we can't parse separator, check if we have enough items
                         if count < start {
                             return Err(err);
                         }
@@ -543,7 +773,6 @@ where
                 }
             }
 
-            // Final check for minimum count
             if count < start {
                 return Err(E::eof((
                     current_input.get_state(),
@@ -555,6 +784,9 @@ where
         })
     }
 
+    /// Chains parser applications with a binary operator.
+    ///
+    /// Repeatedly applies the operator and parser, combining results left-associatively.
     pub fn chain<F, B>(self, op: Parsec<S, E, F>, init: A) -> Parsec<S, E, A>
     where
         S: Clone,
@@ -579,6 +811,9 @@ where
         })
     }
 
+    /// Chains parser applications with right associativity.
+    ///
+    /// Repeatedly applies the operator and parser, combining results right-associatively.
     pub fn chain_right<F>(self, op: Parsec<S, E, F>, init: A) -> Parsec<S, E, A>
     where
         S: Clone,
@@ -615,6 +850,9 @@ where
         Parsec::new(move |input: S| parse_rec(&parser, &op, input, &init))
     }
 
+    /// Combines this parser with another into a pair.
+    ///
+    /// Runs both parsers in sequence and returns both results as a tuple.
     pub fn pair<B: 'static>(self, other: Parsec<S, E, B>) -> Parsec<S, E, (A, B)> {
         Parsec::new(move |input: S| {
             let (next_input, value_a) = self.eval(input)?;
@@ -623,6 +861,10 @@ where
         })
     }
 
+    /// Prepends a single value to a vector result.
+    ///
+    /// Runs this parser to get a single value, then runs the other parser to get a vector,
+    /// and inserts the first value at the beginning of the vector.
     pub fn extend(self, other: Parsec<S, E, Vec<A>>) -> Parsec<S, E, Vec<A>> {
         Parsec::new(move |input: S| {
             let (next_input, value) = self.eval(input)?;
@@ -632,6 +874,9 @@ where
         })
     }
 
+    /// Filters parsed values based on a predicate.
+    ///
+    /// If the predicate returns false, the parser fails.
     pub fn hold<F>(self, f: F) -> Parsec<S, E, A>
     where
         F: Fn(&A) -> bool + 'static,
@@ -652,6 +897,9 @@ where
         })
     }
 
+    /// Succeeds only if the parsed value is not equal to the given value.
+    ///
+    /// If the parsed value equals the specified value, the parser fails.
     pub fn not(self, value: A) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
@@ -671,6 +919,9 @@ where
         })
     }
 
+    /// Succeeds only if the parsed value equals the given value.
+    ///
+    /// If the parsed value doesn't equal the specified value, the parser fails.
     pub fn is(self, value: A) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
@@ -690,6 +941,9 @@ where
         })
     }
 
+    /// Succeeds only if the parsed value is one of the given values.
+    ///
+    /// If the parsed value isn't in the provided iterator, the parser fails.
     pub fn one_of(self, values: impl Iterator<Item = A> + Clone + 'static) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
@@ -711,6 +965,9 @@ where
         })
     }
 
+    /// Succeeds only if the parsed value is none of the given values.
+    ///
+    /// If the parsed value is in the provided iterator, the parser fails.
     pub fn none_of(self, values: impl Iterator<Item = A> + Clone + 'static) -> Parsec<S, E, A>
     where
         A: PartialEq + Display,
@@ -730,6 +987,9 @@ where
         })
     }
 
+    /// Converts the parsed value using the `Into` trait.
+    ///
+    /// Transforms the result type using the standard Rust conversion trait.
     pub fn into<B: 'static>(self) -> Parsec<S, E, B>
     where
         A: Into<B>,
@@ -737,6 +997,9 @@ where
         self.map(|a| a.into())
     }
 
+    /// Captures the parser state before and after parsing.
+    ///
+    /// Returns a tuple of ((start_state, end_state), value).
     pub fn states(self) -> Parsec<S, E, ((LexIterState<S::Context>, LexIterState<S::Context>), A)>
     where
         S: Clone,
@@ -755,6 +1018,9 @@ where
     S: LexIterTrait + 'static,
     E: ParserError<Context = S::Context> + 'static,
 {
+    /// Converts the string to a static string slice by leaking memory.
+    ///
+    /// This is useful when you need a `&'static str`, but use with caution as it creates a memory leak.
     pub fn leak(self) -> Parsec<S, E, &'static str> {
         Parsec::new(move |input: S| {
             let (next_input, value) = self.eval(input)?;
@@ -763,6 +1029,9 @@ where
         })
     }
 
+    /// Trims whitespace from the parsed string.
+    ///
+    /// Removes leading and trailing whitespace from the string.
     pub fn trim(self) -> Parsec<S, E, String> {
         Parsec::new(move |input: S| {
             let (next_input, value) = self.eval(input)?;
@@ -778,6 +1047,9 @@ where
     E: ParserError<Context = S::Context> + 'static,
     A: 'static,
 {
+    /// Flattens a nested parser by executing the inner parser.
+    ///
+    /// This is the monadic join operation.
     pub fn join(self) -> Parsec<S, E, A> {
         Parsec::new(move |input: S| {
             let (next_input, parser) = self.eval(input)?;
@@ -792,6 +1064,9 @@ where
     E: ParserError<Context = S::Context> + 'static,
     A: 'static,
 {
+    /// Sequences a vector of parsers, collecting their results.
+    ///
+    /// Runs each parser in the vector in sequence and collects the results.
     pub fn sequence(self) -> Parsec<S, E, Vec<A>> {
         Parsec::new(move |input: S| {
             let (mut current_input, parsers) = self.eval(input)?;
@@ -814,6 +1089,9 @@ where
     E: ParserError<Context = S::Context> + 'static,
     A: Debug + 'static,
 {
+    /// Sequences an array of parsers, collecting their results into an array.
+    ///
+    /// Runs each parser in the array in sequence and collects the results.
     pub fn sequence(self) -> Parsec<S, E, [A; N]> {
         Parsec::new(move |input: S| {
             let (mut current_input, parsers) = self.eval(input)?;
@@ -839,6 +1117,9 @@ where
     E: ParserError<Context = S::Context> + 'static,
     A: 'static,
 {
+    /// Collects the vector into another collection type.
+    ///
+    /// Converts the vector of results into any type that implements `FromIterator<A>`.
     pub fn collect<B: 'static>(self) -> Parsec<S, E, B>
     where
         A: Into<B>,
@@ -847,6 +1128,9 @@ where
         self.map(|vec| vec.into_iter().collect())
     }
 
+    /// Appends a single value to the vector.
+    ///
+    /// Parses the vector, then parses a single value and adds it to the end.
     pub fn append(self, other: Parsec<S, E, A>) -> Parsec<S, E, Vec<A>> {
         Parsec::new(move |input: S| {
             let (next_input, mut values) = self.eval(input)?;
@@ -856,6 +1140,9 @@ where
         })
     }
 
+    /// Concatenates two vectors.
+    ///
+    /// Parses both vectors and concatenates them.
     pub fn concat(self, other: Parsec<S, E, Vec<A>>) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
@@ -874,6 +1161,9 @@ where
     S: LexIterTrait + 'static,
     E: ParserError<Context = S::Context> + 'static,
 {
+    /// Removes empty strings from the vector.
+    ///
+    /// Filters out any empty strings in the vector.
     pub fn trim(self) -> Parsec<S, E, Vec<String>> {
         Parsec::new(move |input: S| {
             let (next_input, mut values) = self.eval(input)?;
@@ -885,6 +1175,9 @@ where
 
 // === Utility Functions ===
 
+/// Creates a parser that always succeeds with the given value.
+///
+/// This is the monadic `return` or applicative `pure` operation.
 pub fn pure<S, E, T>(value: T) -> Parsec<S, E, T>
 where
     S: LexIterTrait + 'static,
@@ -894,6 +1187,9 @@ where
     Parsec::new(move |input| Ok((input, value.clone())))
 }
 
+/// Creates a parser that always fails with the given error.
+///
+/// This is useful for handling error conditions explicitly.
 pub fn fail<S, E, A>(error: E) -> Parsec<S, E, A>
 where
     S: LexIterTrait + 'static,
@@ -903,6 +1199,9 @@ where
     Parsec::new(move |_| Err(error.clone()))
 }
 
+/// Parses any single input item.
+///
+/// Consumes and returns the next item from the input, or fails if at the end.
 pub fn any<S, E>() -> Parsec<S, E, S::Item>
 where
     S: LexIterTrait + 'static,
@@ -919,6 +1218,19 @@ where
     })
 }
 
+/// Parses a single item that satisfies the given predicate.
+///
+/// Consumes the next item if it satisfies the predicate, otherwise fails.
+///
+/// # Example
+///
+/// ```
+/// use dlexer::parsec::*;
+///
+/// let parser = satisfy(|c| c.is_alphabetic());
+/// assert_eq!(parser.test("a").unwrap(), 'a');
+/// assert!(parser.test("1").is_err());
+/// ```
 pub fn satisfy<S, E, F>(f: F) -> Parsec<S, E, S::Item>
 where
     S: LexIterTrait + 'static,
@@ -940,6 +1252,19 @@ where
     })
 }
 
+/// Parses a specific input item.
+///
+/// Succeeds only if the next item equals the expected item.
+///
+/// # Example
+///
+/// ```
+/// use dlexer::parsec::*;
+///
+/// let parser = item('a');
+/// assert_eq!(parser.test("a").unwrap(), 'a');
+/// assert!(parser.test("b").is_err());
+/// ```
 pub fn item<S, E>(expected: S::Item) -> Parsec<S, E, S::Item>
 where
     S: LexIterTrait + 'static,
@@ -950,6 +1275,7 @@ where
     satisfy::<S, E, _>(move |item| *item == expected_).expected(expected)
 }
 
+/// Parses a decimal digit character (0-9).
 pub fn decimal_digit<S, E>() -> Parsec<S, E, char>
 where
     S: LexIterTrait<Item = char> + 'static,
@@ -958,6 +1284,7 @@ where
     satisfy::<S, E, _>(|c: &char| c.is_digit(10)).expected("digit")
 }
 
+/// Parses a hexadecimal digit character (0-9, a-f, A-F).
 pub fn hex_digit<S, E>() -> Parsec<S, E, char>
 where
     S: LexIterTrait<Item = char> + 'static,
@@ -966,6 +1293,7 @@ where
     satisfy::<S, E, _>(|c: &char| c.is_digit(16)).expected("hex digit")
 }
 
+/// Parses an octal digit character (0-7).
 pub fn octal_digit<S, E>() -> Parsec<S, E, char>
 where
     S: LexIterTrait<Item = char> + 'static,
@@ -974,6 +1302,7 @@ where
     satisfy::<S, E, _>(|c: &char| c.is_digit(8)).expected("octal digit")
 }
 
+/// Parses a digit character in the specified radix.
 pub fn digit<S, E>(radix: u32) -> Parsec<S, E, char>
 where
     S: LexIterTrait<Item = char> + 'static,
@@ -982,6 +1311,7 @@ where
     satisfy::<S, E, _>(move |c: &char| c.is_digit(radix)).expected("digit")
 }
 
+/// Parses an alphabetic character.
 pub fn alpha<S, E>() -> Parsec<S, E, char>
 where
     S: LexIterTrait<Item = char> + 'static,
@@ -990,6 +1320,7 @@ where
     satisfy::<S, E, _>(|c: &char| c.is_alphabetic()).expected("alphabetic character")
 }
 
+/// Parses an alphanumeric character.
 pub fn alphanumeric<S, E>() -> Parsec<S, E, char>
 where
     S: LexIterTrait<Item = char> + 'static,
@@ -998,6 +1329,7 @@ where
     satisfy::<S, E, _>(|c: &char| c.is_alphanumeric()).expected("alphanumeric character")
 }
 
+/// Parses a whitespace character.
 pub fn whitespace<S, E>() -> Parsec<S, E, char>
 where
     S: LexIterTrait<Item = char> + 'static,
@@ -1006,6 +1338,7 @@ where
     satisfy::<S, E, _>(|c: &char| c.is_whitespace()).expected("whitespace character")
 }
 
+/// Parses a newline character.
 pub fn newline<S, E>() -> Parsec<S, E, char>
 where
     S: LexIterTrait<Item = char> + 'static,
@@ -1014,9 +1347,12 @@ where
     satisfy::<S, E, _>(|c: &char| *c == '\n').expected("newline character")
 }
 
+/// Parses the end of input.
+///
+/// Succeeds only if there are no more items in the input.
 pub fn eof<S, E>() -> Parsec<S, E, ()>
 where
-    S: LexIterTrait<Item = char> + Clone + 'static,
+    S: LexIterTrait + Clone + 'static,
     E: ParserError<Context = S::Context> + 'static,
 {
     Parsec::new(move |mut input: S| {
@@ -1029,6 +1365,17 @@ where
     })
 }
 
+/// Parses a specific character.
+///
+/// # Example
+///
+/// ```
+/// use dlexer::parsec::*;
+///
+/// let parser = char('a');
+/// assert_eq!(parser.test("a").unwrap(), 'a');
+/// assert!(parser.test("b").is_err());
+/// ```
 pub fn char<S, E>(expected: char) -> Parsec<S, E, char>
 where
     S: LexIterTrait<Item = char> + 'static,
@@ -1037,6 +1384,7 @@ where
     satisfy::<S, E, _>(move |c: &char| *c == expected).expected(expected)
 }
 
+/// Returns the current parser state without consuming input.
 pub fn state<S, E>() -> Parsec<S, E, LexIterState<S::Context>>
 where
     S: LexIterTrait + 'static,
@@ -1054,6 +1402,9 @@ where
     E: ParserError<Context = S::Context> + 'static,
     A: 'static,
 {
+    /// Unwraps the result, propagating errors.
+    ///
+    /// If the result is `Ok(value)`, returns `value`, otherwise propagates the error.
     pub fn unwrap(self) -> Parsec<S, E, A>
     where
         S: Clone,
@@ -1067,6 +1418,9 @@ where
         })
     }
 
+    /// Unwraps the result, using a default value on error.
+    ///
+    /// If the result is `Ok(value)`, returns `value`, otherwise returns the default.
     pub fn unwrap_or(self, default: A) -> Parsec<S, E, A>
     where
         S: Clone,
@@ -1081,6 +1435,9 @@ where
         })
     }
 
+    /// Unwraps the result, using the default value on error.
+    ///
+    /// If the result is `Ok(value)`, returns `value`, otherwise returns `A::default()`.
     pub fn unwrap_or_default(self) -> Parsec<S, E, A>
     where
         S: Clone,
@@ -1103,6 +1460,9 @@ where
     A: 'static,
     B: 'static,
 {
+    /// Converts inner errors to parser errors using a function.
+    ///
+    /// Maps the inner error type to a displayable value for error reporting.
     pub fn lift_err<F, D: Display>(self, f: F) -> Parsec<S, E, A>
     where
         F: Fn(B) -> D + 'static,
@@ -1132,6 +1492,9 @@ where
 {
     type Output = Parsec<S, E, A>;
 
+    /// Alternative operator. Equivalent to `or`.
+    ///
+    /// Tries the left parser, falling back to the right parser on failure.
     fn bitor(self, other: Self) -> Self::Output {
         self.or(other)
     }
@@ -1146,6 +1509,9 @@ where
 {
     type Output = Parsec<S, E, (A, B)>;
 
+    /// Pair operator. Equivalent to `pair`.
+    ///
+    /// Runs both parsers in sequence and returns the results as a tuple.
     fn add(self, other: Parsec<S, E, B>) -> Self::Output {
         self.pair(other)
     }
@@ -1160,6 +1526,9 @@ where
 {
     type Output = Parsec<S, E, B>;
 
+    /// Sequence operator. Equivalent to `then`.
+    ///
+    /// Runs both parsers in sequence and returns the second result.
     fn shr(self, other: Parsec<S, E, B>) -> Self::Output {
         self.then(other)
     }
@@ -1174,6 +1543,9 @@ where
 {
     type Output = Parsec<S, E, A>;
 
+    /// Left sequence operator. Equivalent to `with`.
+    ///
+    /// Runs both parsers in sequence and returns the first result.
     fn shl(self, other: Parsec<S, E, B>) -> Self::Output {
         self.with(other)
     }
@@ -1189,11 +1561,18 @@ where
 {
     type Output = Parsec<S, E, B>;
 
+    /// Map operator. Equivalent to `map`.
+    ///
+    /// Transforms the parsed value using the given function.
     fn bitand(self, other: F) -> Self::Output {
         self.map(other)
     }
 }
 
+/// Creates a recursive parser using a function that returns a parser.
+///
+/// This is useful for creating parsers that reference themselves, such as
+/// in recursive grammar definitions.
 pub fn rec<F, S, E, A>(f: F) -> Parsec<S, E, A>
 where
     F: Fn() -> Parsec<S, E, A> + 'static,
@@ -1207,6 +1586,10 @@ where
     })
 }
 
+/// Creates a parser that tries each parser in sequence until one succeeds.
+///
+/// This is similar to a series of `or` operations but more efficient for
+/// many alternatives.
 pub fn branch<S, E, A>(parsers: Vec<Parsec<S, E, A>>) -> Parsec<S, E, A>
 where
     S: LexIterTrait + Clone + 'static,
@@ -1227,9 +1610,11 @@ where
     })
 }
 
-// Add this new trait to provide a clear path to the M associated type
+/// Trait for mapping parser output and error types.
 pub trait ParserF {
+    /// The type constructor for mapping over the output type.
     type MapOutput<U>;
+    /// The type constructor for mapping over the error type.
     type MapError<E: ParserError>;
 }
 

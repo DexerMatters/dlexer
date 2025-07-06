@@ -1,7 +1,16 @@
 [package]
 name = "dlexer"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+authors = ["Dexer Matters"]
+description = "A high-performance, functional parser combinator library for Rust"
+repository = "https://github.com/DexerMatters/dlexer"
+license = "MIT"
+keywords = ["parser", "combinator", "lexer", "functional", "parsing"]
+categories = ["parsing", "compilers"]
+readme = "README.md"
+documentation = "https://docs.rs/dlexer"
+homepage = "https://github.com/DexerMatters/dlexer"
 
 [dependencies]
 

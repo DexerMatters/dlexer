@@ -11,14 +11,12 @@ pub struct Color {
 }
 
 pub fn hex_color() -> With<BasicParser, Color> {
-    let u8_hex: fn() -> With<BasicParser, u8> = || {
-        hex_digit()
-            .pair(hex_digit())
-            .map(|(h1, h2)| u8::from_str_radix(&format!("{}{}", h1, h2), 16))
-            .lift_err(|err| format!("Failed to parse u8 from hex digits: {:?}", err))
-    };
+    let u8_hex = hex_digit()
+        .pair(hex_digit())
+        .map(|(h1, h2)| u8::from_str_radix(&format!("{}{}", h1, h2), 16))
+        .lift_err(|err| format!("Failed to parse u8 from hex digits: {:?}", err));
 
-    u8_hex()
+    u8_hex
         .many_till(eof())
         .between(char('#'), eof())
         .map(|v| match v.as_slice() {
