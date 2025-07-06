@@ -3,7 +3,7 @@ pub mod errors;
 pub mod lex;
 pub mod parsec;
 pub mod prelude;
-pub mod stream;
+//mod stream;
 
 mod examples;
 

@@ -2,7 +2,7 @@ pub mod extra;
 
 use std::{
     fmt::{Debug, Display},
-    ops::{Add, BitAnd, BitOr, Shl, Shr},
+    ops::{Add, BitAnd, BitOr, Range, RangeBounds, RangeInclusive, Shl, Shr},
     rc::Rc,
 };
 
@@ -14,6 +14,32 @@ use crate::{
 pub type BuildParser<S, E> = Parsec<S, E, <S as Iterator>::Item>;
 
 pub type BasicParser = Parsec<LexIter, SimpleParserError<str>, <LexIter as LexIterTrait>::Item>;
+
+pub trait Take<T> {
+    type Output: RangeBounds<T>;
+    fn as_range(self) -> Self::Output;
+}
+
+impl Take<usize> for Range<usize> {
+    type Output = Range<usize>;
+    fn as_range(self) -> Self::Output {
+        self
+    }
+}
+
+impl Take<usize> for RangeInclusive<usize> {
+    type Output = RangeInclusive<usize>;
+    fn as_range(self) -> Self::Output {
+        self
+    }
+}
+
+impl Take<usize> for usize {
+    type Output = RangeInclusive<usize>;
+    fn as_range(self) -> Self::Output {
+        self - 1..=self - 1
+    }
+}
 
 #[derive(Clone)]
 pub struct Parsec<S: LexIterTrait, E: ParserError, A> {
@@ -193,8 +219,9 @@ where
     pub fn take<R>(self, range: R) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
-        R: std::ops::RangeBounds<usize> + Clone + 'static,
+        R: Take<usize> + 'static,
     {
+        let range = range.as_range();
         Parsec::new(move |input: S| {
             let mut results = Vec::new();
             let mut current_input = input;
@@ -435,11 +462,15 @@ where
         })
     }
 
-    pub fn sep_take<T: 'static, R>(self, sep: Parsec<S, E, T>, range: R) -> Parsec<S, E, Vec<A>>
+    pub fn sep_take<T: 'static, R>(
+        self,
+        sep: Parsec<S, E, T>,
+        range: impl Take<usize> + 'static,
+    ) -> Parsec<S, E, Vec<A>>
     where
         S: Clone,
-        R: std::ops::RangeBounds<usize> + Clone + 'static,
     {
+        let range = range.as_range();
         Parsec::new(move |input: S| {
             let mut results = Vec::new();
             let mut current_input = input;
@@ -697,6 +728,18 @@ where
         A: Into<B>,
     {
         self.map(|a| a.into())
+    }
+
+    pub fn states(self) -> Parsec<S, E, ((LexIterState<S::Context>, LexIterState<S::Context>), A)>
+    where
+        S: Clone,
+    {
+        Parsec::new(move |input: S| {
+            let original_state = input.get_state();
+            let (next_input, value) = self.eval(input)?;
+            let next_state = next_input.get_state();
+            Ok((next_input, ((original_state, next_state), value)))
+        })
     }
 }
 
@@ -1041,6 +1084,34 @@ where
             match result {
                 Ok(value) => Ok((next_input, value)),
                 Err(_) => Ok((next_input, A::default())),
+            }
+        })
+    }
+}
+
+impl<S, E, A, B> Parsec<S, E, Result<A, B>>
+where
+    S: LexIterTrait + 'static,
+    E: ParserError<Context = S::Context> + 'static,
+    A: 'static,
+    B: 'static,
+{
+    pub fn internalize<F, D: Display>(self, f: F) -> Parsec<S, E, A>
+    where
+        F: Fn(B) -> D + 'static,
+    {
+        Parsec::new(move |input: S| {
+            let original_state = input.get_state();
+            let (next_input, result) = self.eval(input)?;
+            match result {
+                Ok(value) => Ok((next_input, value)),
+                Err(error) => {
+                    let msg = f(error);
+                    Err(E::unexpected(
+                        (original_state, next_input.get_state()),
+                        &msg,
+                    ))
+                }
             }
         })
     }

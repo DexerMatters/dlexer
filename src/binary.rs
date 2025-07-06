@@ -17,7 +17,7 @@ impl ByteLexIter {
     pub fn new(context: &[u8]) -> Self {
         ByteLexIter {
             state: LexIterState {
-                text: Rc::from(context),
+                context: Rc::from(context),
                 current_line: 1,
                 current_column: 0,
                 current_pos: 0,
@@ -38,11 +38,15 @@ impl LexIterTrait for ByteLexIter {
         self.state.clone()
     }
 
+    fn get_state_mut(&mut self) -> &mut LexIterState<Self::Context> {
+        &mut self.state
+    }
+
     fn next(&mut self) -> Option<Self::Item> {
-        if self.state.position >= self.state.text.len() {
+        if self.state.position >= self.state.context.len() {
             return None;
         }
-        let item = self.state.text[self.state.position];
+        let item = self.state.context[self.state.position];
         self.state.position += 1;
         self.state.current_pos += 1;
         Some(item)
@@ -73,7 +77,7 @@ where
 
 pub fn byte<S, E>() -> Parsec<S, E, u8>
 where
-    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    S: LexIterTrait<Item = u8, Context = [u8]> + 'static,
     E: ParserError<Context = [u8]> + 'static,
 {
     any()
@@ -84,13 +88,134 @@ where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
     E: ParserError<Context = [u8]> + 'static,
 {
-    any().take(n - 1..=n - 1)
+    any().take(n)
 }
 
 pub fn u8<S, E>() -> Parsec<S, E, u8>
 where
-    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    S: LexIterTrait<Item = u8, Context = [u8]> + 'static,
     E: ParserError<Context = [u8]> + 'static,
 {
     byte()
+}
+
+pub fn u16<S, E>() -> Parsec<S, E, u16>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    E: ParserError<Context = [u8]> + Clone + 'static,
+{
+    n_bytes(2)
+        .map(|bytes| bytes.try_into().map(u16::from_be_bytes))
+        .internalize(|err| format!("Failed to parse u16 from bytes: {:?}", err))
+}
+
+pub fn u32<S, E>() -> Parsec<S, E, u32>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    E: ParserError<Context = [u8]> + Clone + 'static,
+{
+    n_bytes(4)
+        .map(|bytes| bytes.try_into().map(u32::from_be_bytes))
+        .internalize(|err| format!("Failed to parse u32 from bytes: {:?}", err))
+}
+
+pub fn u64<S, E>() -> Parsec<S, E, u64>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    E: ParserError<Context = [u8]> + Clone + 'static,
+{
+    n_bytes(8)
+        .map(|bytes| bytes.try_into().map(u64::from_be_bytes))
+        .internalize(|err| format!("Failed to parse u64 from bytes: {:?}", err))
+}
+
+pub fn u128<S, E>() -> Parsec<S, E, u128>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    E: ParserError<Context = [u8]> + Clone + 'static,
+{
+    n_bytes(16)
+        .map(|bytes| bytes.try_into().map(u128::from_be_bytes))
+        .internalize(|err| format!("Failed to parse u128 from bytes: {:?}", err))
+}
+pub fn i8<S, E>() -> Parsec<S, E, i8>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + 'static,
+    E: ParserError<Context = [u8]> + 'static,
+{
+    byte().map(|b| i8::from_le_bytes([b]))
+}
+
+pub fn i16<S, E>() -> Parsec<S, E, i16>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    E: ParserError<Context = [u8]> + 'static,
+{
+    n_bytes(2)
+        .map(|bytes| bytes.try_into().map(i16::from_le_bytes))
+        .internalize(|err| format!("Failed to parse i16 from bytes: {:?}", err))
+}
+
+pub fn i32<S, E>() -> Parsec<S, E, i32>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    E: ParserError<Context = [u8]> + 'static,
+{
+    n_bytes(4)
+        .map(|bytes| bytes.try_into().map(i32::from_le_bytes))
+        .internalize(|err| format!("Failed to parse i32 from bytes: {:?}", err))
+}
+
+pub fn i64<S, E>() -> Parsec<S, E, i64>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    E: ParserError<Context = [u8]> + 'static,
+{
+    n_bytes(8)
+        .map(|bytes| bytes.try_into().map(i64::from_le_bytes))
+        .internalize(|err| format!("Failed to parse i64 from bytes: {:?}", err))
+}
+
+pub fn i128<S, E>() -> Parsec<S, E, i128>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    E: ParserError<Context = [u8]> + 'static,
+{
+    n_bytes(16)
+        .map(|bytes| bytes.try_into().map(i128::from_le_bytes))
+        .internalize(|err| format!("Failed to parse i128 from bytes: {:?}", err))
+}
+
+pub fn f32<S, E>() -> Parsec<S, E, f32>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    E: ParserError<Context = [u8]> + Clone + 'static,
+{
+    u32().map(|bits| f32::from_bits(bits))
+}
+
+pub fn f64<S, E>() -> Parsec<S, E, f64>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    E: ParserError<Context = [u8]> + Clone + 'static,
+{
+    u64().map(|bits| f64::from_bits(bits))
+}
+
+pub unsafe fn align_to<S, E, T>() -> Parsec<S, E, *const T>
+where
+    S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
+    E: ParserError<Context = [u8]> + 'static,
+    T: 'static,
+{
+    let size = std::mem::size_of::<T>();
+    n_bytes(size)
+        .map(move |bytes| {
+            let (head, body, _tail) = unsafe { bytes.align_to::<T>() };
+            if head.is_empty() {
+                return Err("Failed to align bytes");
+            }
+            Ok(body.first().unwrap() as *const T)
+        })
+        .internalize(|err| err)
 }
