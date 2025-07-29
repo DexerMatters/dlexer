@@ -721,7 +721,7 @@ where
     /// Parses a specific number of separated values.
     ///
     /// The range specifies minimum and maximum number of items to parse.
-    pub fn sep_take<T: 'static, R>(
+    pub fn sep_take<T: 'static>(
         self,
         sep: Parsec<S, E, T>,
         range: impl Take<usize> + 'static,
