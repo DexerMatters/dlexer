@@ -31,7 +31,10 @@ pub mod extra;
 
 use std::{
     fmt::{Debug, Display},
-    ops::{Add, BitAnd, BitOr, Range, RangeBounds, RangeInclusive, RangeToInclusive, Shl, Shr},
+    ops::{
+        Add, BitAnd, BitOr, Range, RangeBounds, RangeFrom, RangeInclusive, RangeTo,
+        RangeToInclusive, Shl, Shr,
+    },
     rc::Rc,
 };
 
@@ -51,7 +54,7 @@ pub type BasicParser = Parsec<LexIter, SimpleParserError<str>, <LexIter as LexIt
 pub trait Take<T> {
     /// The range type this converts to.
     type Output: RangeBounds<T>;
-    
+
     /// Converts this type into a range bounds.
     fn as_range(self) -> Self::Output;
 }
@@ -72,6 +75,20 @@ impl Take<usize> for RangeInclusive<usize> {
 
 impl Take<usize> for RangeToInclusive<usize> {
     type Output = RangeToInclusive<usize>;
+    fn as_range(self) -> Self::Output {
+        self
+    }
+}
+
+impl Take<usize> for RangeTo<usize> {
+    type Output = RangeTo<usize>;
+    fn as_range(self) -> Self::Output {
+        self
+    }
+}
+
+impl Take<usize> for RangeFrom<usize> {
+    type Output = RangeFrom<usize>;
     fn as_range(self) -> Self::Output {
         self
     }
@@ -749,21 +766,19 @@ where
 
             while count < end {
                 match sep.eval(current_input.clone()) {
-                    Ok((sep_input, _)) => {
-                        match self.eval(sep_input) {
-                            Ok((new_input, value)) => {
-                                results.push(value);
-                                current_input = new_input;
-                                count += 1;
-                            }
-                            Err(err) => {
-                                if count < start {
-                                    return Err(err);
-                                }
-                                break;
-                            }
+                    Ok((sep_input, _)) => match self.eval(sep_input) {
+                        Ok((new_input, value)) => {
+                            results.push(value);
+                            current_input = new_input;
+                            count += 1;
                         }
-                    }
+                        Err(err) => {
+                            if count < start {
+                                return Err(err);
+                            }
+                            break;
+                        }
+                    },
                     Err(err) => {
                         if count < start {
                             return Err(err);
