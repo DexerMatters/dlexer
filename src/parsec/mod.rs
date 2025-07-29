@@ -802,7 +802,7 @@ where
     /// Chains parser applications with a binary operator.
     ///
     /// Repeatedly applies the operator and parser, combining results left-associatively.
-    pub fn chain<F, B>(self, op: Parsec<S, E, F>, init: A) -> Parsec<S, E, A>
+    pub fn chain<F>(self, op: Parsec<S, E, F>, init: A) -> Parsec<S, E, A>
     where
         S: Clone,
         F: Fn(A, A) -> A + Clone + 'static,
