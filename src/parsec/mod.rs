@@ -826,6 +826,33 @@ where
         })
     }
 
+    /// Chains parser applications with a binary operator, requiring at least one successful parse.
+    ///
+    /// Similar to `chain`, but requires at least one successful application of the value parser.
+    /// Repeatedly applies the operator and parser, combining results left-associatively.
+    pub fn chain1<F>(self, op: Parsec<S, E, F>) -> Parsec<S, E, A>
+    where
+        S: Clone,
+        F: Fn(A, A) -> A + Clone + 'static,
+        A: Clone,
+    {
+        Parsec::new(move |input: S| {
+            let (mut inp, mut acc) = self.eval(input)?;
+            loop {
+                let op_res = op.eval(inp.clone());
+                let val_res = self.eval(inp.clone());
+                match (op_res, val_res) {
+                    (Ok((_, f)), Ok((val_input, val))) => {
+                        acc = f(acc, val);
+                        inp = val_input;
+                    }
+                    _ => break,
+                }
+            }
+            Ok((inp, acc))
+        })
+    }
+
     /// Chains parser applications with right associativity.
     ///
     /// Repeatedly applies the operator and parser, combining results right-associatively.
