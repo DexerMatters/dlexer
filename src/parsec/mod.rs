@@ -810,17 +810,16 @@ where
     {
         Parsec::new(move |input: S| {
             let mut acc = init.clone();
-            let mut inp = input.clone();
+            let mut inp = input;
             loop {
-                let op_res = op.eval(inp.clone());
-                let val_res = self.eval(inp.clone());
-                match (op_res, val_res) {
-                    (Ok((_, f)), Ok((val_input, val))) => {
+                if let Ok((op_input, f)) = op.eval(inp.clone()) {
+                    if let Ok((val_input, val)) = self.eval(op_input) {
                         acc = f(acc, val);
                         inp = val_input;
+                        continue;
                     }
-                    _ => break,
                 }
+                break;
             }
             Ok((inp, acc))
         })
@@ -839,15 +838,14 @@ where
         Parsec::new(move |input: S| {
             let (mut inp, mut acc) = self.eval(input)?;
             loop {
-                let op_res = op.eval(inp.clone());
-                let val_res = self.eval(inp.clone());
-                match (op_res, val_res) {
-                    (Ok((_, f)), Ok((val_input, val))) => {
+                if let Ok((op_input, f)) = op.eval(inp.clone()) {
+                    if let Ok((val_input, val)) = self.eval(op_input) {
                         acc = f(acc, val);
                         inp = val_input;
+                        continue;
                     }
-                    _ => break,
                 }
+                break;
             }
             Ok((inp, acc))
         })
@@ -866,7 +864,6 @@ where
             parser: &Parsec<S, E, A>,
             op: &Parsec<S, E, F>,
             input: S,
-            init: &A,
         ) -> Result<(S, A), E>
         where
             S: Clone + 'static,
@@ -874,22 +871,17 @@ where
             F: Fn(A, A) -> A + Clone + 'static,
             A: Clone + 'static,
         {
-            match parser.eval(input.clone()) {
-                Ok((next_input, x)) => match op.eval(next_input.clone()) {
-                    Ok((op_input, f)) => {
-                        let (rest_input, y) = parse_rec(parser, op, op_input, init)?;
-                        Ok((rest_input, f(x, y)))
-                    }
-                    Err(_) => Ok((next_input, x)),
-                },
-                Err(_) => Ok((input, init.clone())),
+            let (next_input, x) = parser.eval(input)?;
+            if let Ok((op_input, f)) = op.eval(next_input.clone()) {
+                let (rest_input, y) = parse_rec(parser, op, op_input)?;
+                Ok((rest_input, f(x, y)))
+            } else {
+                Ok((next_input, x))
             }
         }
 
-        let parser = self;
-        let op = op;
-        let init = init;
-        Parsec::new(move |input: S| parse_rec(&parser, &op, input, &init))
+        let parser = self.or(pure(init.clone()));
+        Parsec::new(move |input: S| parse_rec(&parser, &op, input))
     }
 
     /// Combines this parser with another into a pair.

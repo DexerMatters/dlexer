@@ -1,6 +1,6 @@
 [package]
 name = "dlexer"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 authors = ["Dexer Matters"]
 description = "A high-performance, functional parser combinator library for Rust"

@@ -152,7 +152,7 @@ mod tests {
 
     use crate::{
         binary::{n_bytes, u32, BasicByteParser},
-        lex::{symbol, token, WhitespaceSkipper},
+        lex::{number, symbol, token, WhitespaceSkipper},
         parsec::*,
     };
 
@@ -266,6 +266,22 @@ mod tests {
         match p.parse(&input) {
             Ok(a) => println!("Parsed successfully: {:?}", a),
             Err(e) => println!("{}", e),
+        }
+    }
+
+    #[test]
+    fn chain_test() {
+        let p: With<P, _> = number().chain1(char('+').map(|_| |x, y| x + y));
+        let input = "1+2+3+4";
+        match p.parse(input, WhitespaceSkipper) {
+            Ok(a) => {
+                println!("Parsed successfully: {:?}", a);
+                assert_eq!(a, 10.0);
+            }
+            Err(e) => {
+                println!("{}", e);
+                panic!("chain_test failed");
+            }
         }
     }
 }
