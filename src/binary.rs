@@ -16,13 +16,13 @@
 //! - Unsigned types (`u16`, `u32`, etc.): **Big-endian** byte order
 //! - Signed types (`i8`, `i16`, etc.): **Little-endian** byte order
 //! - Floating-point types: Use bit patterns from their respective unsigned integer types
-//! 
+//!
 //! # Usage Example
-//! 
+//!
 //! ```rust
 //! use dlexer::binary::{n_bytes, u32, BasicByteParser};
 //! use dlexer::parsec::*;
-//! 
+//!
 //! // Parse a binary structure with a length prefix followed by that many bytes
 //! let parser: BasicByteParser = do_parse!(
 //!     let% length = u32();        // Read a 32-bit unsigned integer (big-endian)
@@ -30,24 +30,24 @@
 //!     eof();                      // Ensure we've consumed all input
 //!     pure(bytes)                 // Return the bytes as the result
 //! );
-//! 
+//!
 //! // Input representing a 4-byte payload with length prefix
 //! let input = [0x00, 0x00, 0x00, 0x04, 0xAA, 0xBB, 0xCC, 0xDD];
 //! let result = parser.parse(&input);
 //! ```
-//! 
+//!
 //! # Safety
-//! 
+//!
 //! The `align_to` function is marked as unsafe because it performs unsafe memory operations.
 //! It should be used with caution and only when the caller can guarantee proper memory alignment.
 
-use std::rc::Rc;
 use std::fmt::Debug;
+use std::rc::Rc;
 
 use crate::{
     errors::{ParserError, SimpleParserError},
     lex::{LexIterState, LexIterTrait},
-    parsec::{Parsec, any},
+    parsec::{any, Parsec},
 };
 
 /// A type alias for a basic parser that works with binary data.
@@ -154,16 +154,22 @@ where
             let original = input.get_state();
             println!("Binary Input:");
             println!("  Position:\t{}", original.current_pos);
-            
+
             // Show a hex dump of the next few bytes
             let remaining = &original.context[original.position..];
             let preview_len = std::cmp::min(16, remaining.len());
             if preview_len > 0 {
                 let preview = &remaining[..preview_len];
-                let hex_preview: Vec<String> = preview.iter().map(|b| format!("{:02x}", b)).collect();
-                println!("  Parsing:\t[{}]{}",
+                let hex_preview: Vec<String> =
+                    preview.iter().map(|b| format!("{:02x}", b)).collect();
+                println!(
+                    "  Parsing:\t[{}]{}",
                     hex_preview.join(" "),
-                    if remaining.len() > preview_len { "..." } else { "" }
+                    if remaining.len() > preview_len {
+                        "..."
+                    } else {
+                        ""
+                    }
                 );
             } else {
                 println!("  Parsing:\tEnd of input");
@@ -176,24 +182,30 @@ where
                     println!("Binary Output:");
                     println!("  Value:\t{:?}", value);
                     println!("  Position:\t{}", next.current_pos);
-                    
+
                     let next_remaining = &next.context[next.position..];
                     let next_preview_len = std::cmp::min(16, next_remaining.len());
                     if next_preview_len > 0 {
                         let next_preview = &next_remaining[..next_preview_len];
-                        let next_hex_preview: Vec<String> = next_preview.iter().map(|b| format!("{:02x}", b)).collect();
-                        println!("  Remaining:\t[{}]{}",
+                        let next_hex_preview: Vec<String> =
+                            next_preview.iter().map(|b| format!("{:02x}", b)).collect();
+                        println!(
+                            "  Remaining:\t[{}]{}",
                             next_hex_preview.join(" "),
-                            if next_remaining.len() > next_preview_len { "..." } else { "" }
+                            if next_remaining.len() > next_preview_len {
+                                "..."
+                            } else {
+                                ""
+                            }
                         );
                     } else {
                         println!("  Remaining:\tEnd of input");
                     }
-                    
+
                     // Calculate and display how many bytes were consumed
                     let consumed = next.current_pos - original.current_pos;
                     println!("  Consumed:\t{} bytes", consumed);
-                    
+
                     Ok((next_input, value))
                 }
                 Err(error) => {
@@ -209,6 +221,7 @@ where
 /// Creates a parser that consumes a single byte from the input.
 ///
 /// Returns the byte as a `u8` value.
+#[inline]
 pub fn byte<S, E>() -> Parsec<S, E, u8>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + 'static,
@@ -220,6 +233,7 @@ where
 /// Creates a parser for a specified number of bytes.
 ///
 /// Consumes exactly `n` bytes from the input stream and returns them as a `Vec<u8>`.
+#[inline]
 pub fn n_bytes<S, E>(n: usize) -> Parsec<S, E, Vec<u8>>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
@@ -231,6 +245,7 @@ where
 /// Creates a parser for an unsigned 8-bit integer.
 ///
 /// This function is an alias for [`byte()`], provided for consistency with other numeric parsers.
+#[inline]
 pub fn u8<S, E>() -> Parsec<S, E, u8>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + 'static,
@@ -240,6 +255,7 @@ where
 }
 
 /// Creates a parser for an unsigned 16-bit integer (u16) in big-endian byte order.
+#[inline]
 pub fn u16<S, E>() -> Parsec<S, E, u16>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
@@ -251,6 +267,7 @@ where
 }
 
 /// Creates a parser for an unsigned 32-bit integer (u32) in big-endian byte order.
+#[inline]
 pub fn u32<S, E>() -> Parsec<S, E, u32>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
@@ -262,6 +279,7 @@ where
 }
 
 /// Creates a parser for an unsigned 64-bit integer (u64) in big-endian byte order.
+#[inline]
 pub fn u64<S, E>() -> Parsec<S, E, u64>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
@@ -273,6 +291,7 @@ where
 }
 
 /// Creates a parser for an unsigned 128-bit integer (u128) in big-endian byte order.
+#[inline]
 pub fn u128<S, E>() -> Parsec<S, E, u128>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
@@ -284,6 +303,7 @@ where
 }
 
 /// Creates a parser for a signed 8-bit integer (i8) in little-endian byte order.
+#[inline]
 pub fn i8<S, E>() -> Parsec<S, E, i8>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + 'static,
@@ -293,6 +313,7 @@ where
 }
 
 /// Creates a parser for a signed 16-bit integer (i16) in little-endian byte order.
+#[inline]
 pub fn i16<S, E>() -> Parsec<S, E, i16>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
@@ -304,6 +325,7 @@ where
 }
 
 /// Creates a parser for a signed 32-bit integer (i32) in little-endian byte order.
+#[inline]
 pub fn i32<S, E>() -> Parsec<S, E, i32>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
@@ -315,6 +337,7 @@ where
 }
 
 /// Creates a parser for a signed 64-bit integer (i64) in little-endian byte order.
+#[inline]
 pub fn i64<S, E>() -> Parsec<S, E, i64>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
@@ -326,6 +349,7 @@ where
 }
 
 /// Creates a parser for a signed 128-bit integer (i128) in little-endian byte order.
+#[inline]
 pub fn i128<S, E>() -> Parsec<S, E, i128>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
@@ -340,6 +364,7 @@ where
 ///
 /// Reads 4 bytes in big-endian order and interprets the bit pattern as an `f32`
 /// using [`f32::from_bits`].
+#[inline]
 pub fn f32<S, E>() -> Parsec<S, E, f32>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
@@ -350,6 +375,7 @@ where
 
 /// Creates a parser for a 64-bit floating-point number (f64).
 /// This converts the bit pattern of a u64 to an f64.
+#[inline]
 pub fn f64<S, E>() -> Parsec<S, E, f64>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,
@@ -372,6 +398,7 @@ where
 /// - The caller must ensure that the memory layout of `T` matches the expected binary format
 ///
 /// Only use this when you have complete control over the memory layout and alignment.
+#[inline]
 pub unsafe fn align_to<S, E, T>() -> Parsec<S, E, *const T>
 where
     S: LexIterTrait<Item = u8, Context = [u8]> + Clone + 'static,

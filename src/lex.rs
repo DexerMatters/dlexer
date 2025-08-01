@@ -614,8 +614,9 @@ impl From<String> for LexIter {
 /// let parser = token(char('a') >> char('b'));
 /// assert_eq!(parser.parse("ab", WhitespaceSkipper).unwrap(), 'b');
 /// assert!(parser.parse("a b", WhitespaceSkipper).is_err());
-/// 
+///
 /// ```
+#[inline]
 pub fn token<S, E, A>(p: Parsec<S, E, A>) -> Parsec<S, E, A>
 where
     S: LexIterTrait<Context = str> + HasSkipper + 'static,
@@ -733,6 +734,7 @@ where
 /// let result = hex_parser.parse("  FF  ", WhitespaceSkipper);
 /// assert_eq!(result.unwrap(), 255);
 /// ```
+#[inline]
 pub fn integer<S, E>(radix: u32) -> Parsec<S, E, i64>
 where
     S: LexIterTrait<Context = str, Item = char> + Clone + HasSkipper + 'static,
@@ -771,6 +773,7 @@ where
 /// let result = parser.parse("  3.14  ", WhitespaceSkipper);
 /// assert_eq!(result.unwrap(), 3.14);
 /// ```
+#[inline]
 pub fn float<S, E>() -> Parsec<S, E, f64>
 where
     S: LexIterTrait<Context = str, Item = char> + Clone + HasSkipper + 'static,
@@ -809,6 +812,7 @@ where
 /// assert_eq!(parser.parse("123", WhitespaceSkipper).unwrap(), 123.0);
 /// assert_eq!(parser.parse("123.45", WhitespaceSkipper).unwrap(), 123.45);
 /// ```
+#[inline]
 pub fn number<S, E>() -> Parsec<S, E, f64>
 where
     S: LexIterTrait<Context = str, Item = char> + Clone + HasSkipper + 'static,
@@ -854,6 +858,7 @@ where
 /// let result = parser.parse("  if  ", WhitespaceSkipper);
 /// assert_eq!(result.unwrap(), "if");
 /// ```
+#[inline]
 pub fn symbol<S, E>(expected: &str) -> Parsec<S, E, String>
 where
     S: LexIterTrait<Context = str, Item = char> + Clone + HasSkipper + 'static,

@@ -34,6 +34,7 @@ use crate::parsec::{Parsec, ParserError};
 /// // Fails because it does not start with a letter or underscore.
 /// assert!(ident_parser.test("123").is_err());
 /// ```
+#[inline]
 pub fn build_ident<const N: usize, S, E>(reserved: [&'static str; N]) -> Parsec<S, E, String>
 where
     S: LexIterTrait<Item = char> + Clone + 'static,
